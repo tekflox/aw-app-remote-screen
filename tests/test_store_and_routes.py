@@ -244,3 +244,16 @@ def test_legacy_remote_agent_channel_is_still_selectable(store):
                         "agent_base_url": "http://127.0.0.1:10005"})
     assert row["agent_kind"] == "remote_agent"
     assert row["agent_base_url"] == "http://127.0.0.1:10005"
+
+
+def test_activate_never_reads_the_table():
+    """Migrations run AFTER activate(), so on a first install the table has only
+    its initial shape. Any SELECT naming a migration-added column fails there
+    and takes the whole install down — which is exactly what happened on the
+    real-Postgres install of 0.2.0. Pin it: activate() must not touch the data.
+    """
+    src = (Path(__file__).resolve().parent.parent
+           / "remote_screen_app" / "plugin.py").read_text()
+    activate = src.split("async def activate", 1)[1].split("async def ", 1)[0]
+    for forbidden in ("store.list(", "store.get(", "store.credentials("):
+        assert forbidden not in activate, f"activate() must not call {forbidden}"

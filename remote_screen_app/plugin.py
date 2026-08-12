@@ -31,7 +31,14 @@ class RemoteDesktopAppPlugin:
         self.ctx = ctx
         self.store = HostStore(ctx)
         ctx.routes.register(routes_mod.build_routes(ctx, self.store))
-        log.info("aw-app-remote-screen activated (%d saved host(s))", len(self.store.list()))
+        # Deliberately NOT store.list() here. The runtime applies migrations/
+        # AFTER activate() returns, so on a FIRST install the table exists with
+        # only its initial shape and any SELECT naming a migration-added column
+        # (device_serial, agent_kind, ...) fails — taking the whole install
+        # down. Caught live on a real Postgres install, 2026-08-12; SQLite
+        # standalone hid it because that path adds POST_INIT_COLUMNS at create
+        # time. Nothing in activate() may read the table.
+        log.info("aw-app-remote-screen activated")
 
     async def on_config_saved(self, ctx) -> None:
         # Viewer defaults are read per-request off ctx.config (GET /settings),
