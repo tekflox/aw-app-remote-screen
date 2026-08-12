@@ -96,6 +96,7 @@ export function register(host) {
     const [pickerOpen, setPickerOpen] = useState(false);
     const [error, setError] = useState(null);
     const iframeRef = useRef(null);
+    const credsRef = useRef(null);
 
     const selected = hosts.find((h) => h.id === selectedId);
 
@@ -128,13 +129,42 @@ export function register(host) {
         return;
       }
       try {
-        const { password } = await call('GET', `/hosts/${id}/credentials`);
-        setIframeSrc(novncUrl(id, password, settings));
+        const creds = await call('GET', `/hosts/${id}/credentials`);
+        credsRef.current = creds;
+        setIframeSrc(novncUrl(id, creds.password, settings));
         setIframeKey((k) => k + 1);
       } catch (e) {
         setError(e.message);
       }
     }, [hosts, settings]);
+
+    // noVNC's vnc.html only ever reads `?password=` from the URL and builds its
+    // RFB with `credentials: { password }` — there is no username URL param.
+    // That is enough for standard VNC auth (security type 2), but NOT for the
+    // Apple Remote Desktop scheme (type 30) that macOS Screen Sharing offers,
+    // which demands username AND password: noVNC fires `credentialsrequired`
+    // and puts up its own in-iframe prompt. Reaching into the same-origin
+    // iframe to answer that event is what makes a saved macOS host log in
+    // without the user re-typing anything — same mechanism as the virtual
+    // keyboard button above.
+    const injectCredentials = useCallback(() => {
+      const win = iframeRef.current?.contentWindow;
+      const creds = credsRef.current;
+      if (!win || !creds) return;
+      let tries = 0;
+      const attach = () => {
+        const rfb = win.UI?.rfb;
+        if (!rfb) {
+          // The RFB object only exists once noVNC's autoconnect has run.
+          if (++tries < 40) setTimeout(attach, 100);
+          return;
+        }
+        rfb.addEventListener('credentialsrequired', () => {
+          rfb.sendCredentials({ username: creds.username || '', password: creds.password || '' });
+        });
+      };
+      attach();
+    }, []);
 
     useEffect(() => {
       if (selectedId && settings) connect(selectedId);
@@ -233,6 +263,7 @@ export function register(host) {
             </div>
           ) : (
             <iframe ref={iframeRef} key={iframeKey} src={iframeSrc}
+              onLoad={injectCredentials}
               className="absolute inset-0 w-full h-full border-0" title="Remote Desktop" />
           )}
         </div>
