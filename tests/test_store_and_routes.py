@@ -135,7 +135,7 @@ def test_settings_endpoint_reflects_config(ctx, store):
 def test_hosts_ui_page_is_served_and_self_contained(client):
     """The Settings panel is an iframe onto this page (see hosts_ui.py), so a
     regression here silently empties the settings pane rather than erroring."""
-    res = client.get("/ui/hosts")
+    res = client.get("/panel/hosts")
     assert res.status_code == 200
     assert res.headers["content-type"].startswith("text/html")
     body = res.text
@@ -255,5 +255,8 @@ def test_activate_never_reads_the_table():
     src = (Path(__file__).resolve().parent.parent
            / "remote_screen_app" / "plugin.py").read_text()
     activate = src.split("async def activate", 1)[1].split("async def ", 1)[0]
+    # Strip comments — the fix's own comment names store.list() to explain why
+    # it is gone, and matching that would make the test assert on prose.
+    activate = "\n".join(ln.split("#")[0] for ln in activate.splitlines())
     for forbidden in ("store.list(", "store.get(", "store.credentials("):
         assert forbidden not in activate, f"activate() must not call {forbidden}"

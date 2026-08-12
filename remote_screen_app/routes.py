@@ -102,11 +102,16 @@ def build_routes(ctx, store: HostStore) -> FastAPI:
             "view_only": bool(cfg.get("view_only")),
         }
 
-    @app.get("/ui/hosts", response_class=HTMLResponse)
+    @app.get("/panel/hosts", response_class=HTMLResponse)
     async def hosts_ui() -> HTMLResponse:
         """The hosts editor, rendered into the Settings panel's iframe widget
         (windows/hosts.json). See hosts_ui.py for why this isn't declarative
-        widgets. Behind IdentityGuard like every other route here."""
+        widgets. Behind IdentityGuard like every other route here.
+
+        NOT under ``/ui/`` — core owns ``GET /api/apps/{slug}/ui/{path:path}``
+        to serve component-mode ESM bundles, and that route shadows anything an
+        app mounts there. Found the hard way: the settings iframe 404'd on a
+        real install while every other route worked."""
         return HTMLResponse(HOSTS_UI_HTML)
 
     @app.get("/hosts/{host_id}/android/status")
