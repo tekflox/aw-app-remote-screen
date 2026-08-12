@@ -1,0 +1,101 @@
+{
+  "manifest_version": 1,
+  "id": "rdp-vnc",
+  "name": "Remote Desktop",
+  "version": "0.1.0",
+  "description": "Browser-side remote desktop client (noVNC over a raw WebSocket→TCP byte bridge), with a Hosts settings panel to add/edit/remove saved machines. Ported from the aw monolith (src/api/routes/remote_desktop.py + RemoteDesktopWindow.jsx), moving the flat remote_desktop.json config into this app's OWN Postgres table (app__rdp-vnc__hosts) with real per-app SQL migrations, and host passwords into the workspace secret store instead of a file encrypted with the monolith's key.",
+  "tier": "inprocess",
+  "requires_ui_refresh": true,
+  "publisher": "TekFlox",
+  "resource_estimate": {
+    "cpu": "low",
+    "memory": "low",
+    "disk": "low"
+  },
+  "runtime": {
+    "python": ">=3.11",
+    "entrypoint": "rdp_vnc_app.plugin:RemoteDesktopAppPlugin",
+    "pip_requires": [],
+    "standalone": {
+      "module": "rdp_vnc_app",
+      "default_port": 9410
+    }
+  },
+  "permissions": [
+    "routes:register",
+    "db:own-tables",
+    "secrets:own",
+    "ui:code",
+    "ui:slots:core.nav.workspace"
+  ],
+  "contributes": {
+    "routes": [
+      {
+        "prefix": "/api/apps/rdp-vnc"
+      }
+    ],
+    "windows": [
+      {
+        "id": "rdp-vnc.main",
+        "title": "Remote Desktop",
+        "icon": "monitor",
+        "body": {
+          "type": "component"
+        }
+      },
+      {
+        "id": "rdp-vnc.hosts",
+        "title": "Remote Desktop — Hosts",
+        "body": {
+          "type": "declarative",
+          "spec": "windows/hosts.json"
+        }
+      }
+    ],
+    "settings_panels": [
+      {
+        "id": "rdp-vnc.settings",
+        "window": "rdp-vnc.hosts"
+      }
+    ],
+    "frontend": {
+      "mode": "component",
+      "bundle": "ui/dist/rdp-vnc.js",
+      "slots": [
+        "core.nav.workspace",
+        "core.window.body:rdp-vnc.main"
+      ]
+    }
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "default_scaling": {
+        "type": "string",
+        "enum": [
+          "scale",
+          "remote",
+          "none"
+        ],
+        "default": "scale",
+        "description": "How the noVNC viewport fits the window: scale (fit locally), remote (ask the server to resize its desktop), none (1:1 with scrollbars)."
+      },
+      "view_only": {
+        "type": "boolean",
+        "default": false,
+        "description": "Open every session read-only — the remote desktop is rendered but keyboard/mouse input is not forwarded."
+      },
+      "connect_timeout_s": {
+        "type": "number",
+        "default": 10,
+        "description": "Seconds to wait for the TCP connection to a host before the bridge gives up and closes the WebSocket with code 4502."
+      }
+    },
+    "required": []
+  },
+  "config_visible": true,
+  "dependencies": {},
+  "migrations": {
+    "dir": "migrations"
+  }
+}

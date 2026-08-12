@@ -1,0 +1,18 @@
+{
+  "layout": "stack",
+  "regions": [
+    {
+      "id": "hosts",
+      "widgets": [
+        {
+          "type": "markdown",
+          "value": "## Remote Desktop hosts\nMachines you can open from the **Remote Desktop** window. Passwords go to this workspace's secret store, never into the hosts table."
+        },
+        {
+          "type": "iframe",
+          "src": "/api/apps/rdp-vnc/ui/hosts"
+        }
+      ]
+    }
+  ]
+}
