@@ -17,14 +17,14 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rdp_vnc_app.__main__ import _SqliteCtx  # noqa: E402
-from rdp_vnc_app.routes import build_routes  # noqa: E402
-from rdp_vnc_app.store import HostError, HostNotFound, HostStore  # noqa: E402
+from remote_screen_app.__main__ import _SqliteCtx  # noqa: E402
+from remote_screen_app.routes import build_routes  # noqa: E402
+from remote_screen_app.store import HostError, HostNotFound, HostStore  # noqa: E402
 
 
 @pytest.fixture()
 def ctx(tmp_path, monkeypatch):
-    monkeypatch.setattr("rdp_vnc_app.__main__.DATA_DIR", tmp_path)
+    monkeypatch.setattr("remote_screen_app.__main__.DATA_DIR", tmp_path)
     return _SqliteCtx(tmp_path / "hosts.sqlite3")
 
 
@@ -139,8 +139,90 @@ def test_hosts_ui_page_is_served_and_self_contained(client):
     assert res.status_code == 200
     assert res.headers["content-type"].startswith("text/html")
     body = res.text
-    assert "/api/apps/rdp-vnc" in body       # talks to this app's own routes
+    assert "/api/apps/remote-screen" in body       # talks to this app's own routes
     assert "<script" in body and "src=" not in body.split("<script")[1][:200]
     # No unrendered \u escapes leaking into markup (they're only valid in JS).
     head = body.split("<script")[0]
     assert "\\u" not in head
+
+
+# ── Android protocol ────────────────────────────────────────────────────────
+
+def test_post_init_columns_match_migration():
+    """POST_INIT_COLUMNS is duplicated in store.py (for standalone, which has no
+    migration runner) and migrations/0002. Drift means standalone silently
+    lacks a column the store SELECTs, so pin them together."""
+    from remote_screen_app.store import POST_INIT_COLUMNS
+    sql = (Path(__file__).resolve().parent.parent
+           / "migrations" / "0002_android_columns.sql").read_text()
+    for col in POST_INIT_COLUMNS:
+        assert f"ADD COLUMN IF NOT EXISTS {col}" in sql, col
+
+
+def test_android_host_needs_no_port(store):
+    row = store.create({"name": "pixel", "protocol": "android", "host": "macbook-fred",
+                        "device_serial": "emulator-5554"})
+    assert row["port"] == 0
+    assert row["protocol"] == "android"
+    assert row["supported"] is True          # android's transport really works
+    assert row["device_serial"] == "emulator-5554"
+
+
+def test_vnc_still_requires_a_port(store):
+    with pytest.raises(HostError):
+        store.create({"name": "mac", "protocol": "vnc", "host": "10.0.0.5"})
+
+
+def test_android_fields_survive_a_partial_update(store):
+    row = store.create({"name": "pixel", "protocol": "android", "host": "macbook-fred",
+                        "device_serial": "emulator-5554", "adb_bin": "/opt/adb"})
+    updated = store.update(row["id"], {"name": "pixel-2"})
+    assert updated["device_serial"] == "emulator-5554"
+    assert updated["adb_bin"] == "/opt/adb"
+
+
+def test_adb_command_is_device_scoped_only_when_a_serial_is_set():
+    from remote_screen_app.android import adb
+    assert adb({"device_serial": "emulator-5554", "adb_bin": "adb"}) == "adb -s emulator-5554"
+    # Blank serial means "the only attached device" — adb picks it itself.
+    assert adb({"device_serial": "", "adb_bin": "adb"}) == "adb"
+
+
+@pytest.mark.parametrize("msg,expected_tail", [
+    ({"type": "tap", "x": 10, "y": 20}, "tap 10 20"),
+    ({"type": "swipe", "x1": 1, "y1": 2, "x2": 3, "y2": 4}, "swipe 1 2 3 4"),
+    ({"type": "swipe", "x1": 1, "y1": 2, "x2": 3, "y2": 4, "duration_ms": 300},
+     "swipe 1 2 3 4 300"),
+    ({"type": "key", "code": "KEYCODE_HOME"}, "keyevent KEYCODE_HOME"),
+])
+def test_input_commands_build(msg, expected_tail):
+    from remote_screen_app.android import build_input_command
+    cmd = build_input_command({"device_serial": "s", "adb_bin": "adb"}, msg)
+    assert cmd.endswith(expected_tail)
+
+
+@pytest.mark.parametrize("msg", [
+    {"type": "tap", "x": "NaN", "y": 2},
+    {"type": "key", "code": "HOME; rm -rf /"},      # injection attempt
+    {"type": "key", "code": "$(whoami)"},
+    {"type": "text", "text": ""},
+    {"type": "nope"},
+])
+def test_malformed_or_injecting_input_is_dropped(msg):
+    """Returning None (not raising) keeps one garbage frame from killing a live
+    session; rejecting odd keycodes matters because the value is interpolated
+    into a command that runs on the remote machine."""
+    from remote_screen_app.android import build_input_command
+    assert build_input_command({"device_serial": "s", "adb_bin": "adb"}, msg) is None
+
+
+def test_text_input_is_shell_quoted():
+    from remote_screen_app.android import build_input_command
+    cmd = build_input_command({"device_serial": "s", "adb_bin": "adb"},
+                              {"type": "text", "text": "hi; rm -rf /"})
+    assert "'hi; rm -rf /'" in cmd
+
+
+def test_android_endpoints_reject_a_vnc_host(client):
+    vnc = client.post("/hosts", json={"name": "mac", "host": "10.0.0.5", "port": 5900}).json()
+    assert client.get(f"/hosts/{vnc['id']}/android/status").status_code == 400

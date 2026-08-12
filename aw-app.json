@@ -1,9 +1,9 @@
 {
   "manifest_version": 1,
-  "id": "rdp-vnc",
-  "name": "Remote Desktop",
-  "version": "0.1.0",
-  "description": "Browser-side remote desktop client (noVNC over a raw WebSocket→TCP byte bridge), with a Hosts settings panel to add/edit/remove saved machines. Ported from the aw monolith (src/api/routes/remote_desktop.py + RemoteDesktopWindow.jsx), moving the flat remote_desktop.json config into this app's OWN Postgres table (app__rdp-vnc__hosts) with real per-app SQL migrations, and host passwords into the workspace secret store instead of a file encrypted with the monolith's key.",
+  "id": "remote-screen",
+  "name": "Remote Screen",
+  "version": "0.2.0",
+  "description": "Remote screens in the browser, three protocols behind one viewer: VNC (noVNC over a raw WebSocket->TCP byte bridge), RDP (same bridge, pending a browser-side client), and Android (live ~2 fps screen mirror + tap/swipe/text/key input over the remote-agent exec channel \u2014 no VNC server involved). Hosts live in this app's own Postgres table with per-app SQL migrations; passwords in the workspace secret store. Ports the monolith's src/api/routes/remote_desktop.py + android_viewer.py + RemoteDesktopWindow.jsx.",
   "tier": "inprocess",
   "requires_ui_refresh": true,
   "publisher": "TekFlox",
@@ -14,10 +14,10 @@
   },
   "runtime": {
     "python": ">=3.11",
-    "entrypoint": "rdp_vnc_app.plugin:RemoteDesktopAppPlugin",
+    "entrypoint": "remote_screen_app.plugin:RemoteDesktopAppPlugin",
     "pip_requires": [],
     "standalone": {
-      "module": "rdp_vnc_app",
+      "module": "remote_screen_app",
       "default_port": 9410
     }
   },
@@ -31,21 +31,21 @@
   "contributes": {
     "routes": [
       {
-        "prefix": "/api/apps/rdp-vnc"
+        "prefix": "/api/apps/remote-screen"
       }
     ],
     "windows": [
       {
-        "id": "rdp-vnc.main",
-        "title": "Remote Desktop",
+        "id": "remote-screen.main",
+        "title": "Remote Screen",
         "icon": "monitor",
         "body": {
           "type": "component"
         }
       },
       {
-        "id": "rdp-vnc.hosts",
-        "title": "Remote Desktop — Hosts",
+        "id": "remote-screen.hosts",
+        "title": "Remote Screen \u2014 Hosts",
         "body": {
           "type": "declarative",
           "spec": "windows/hosts.json"
@@ -54,16 +54,16 @@
     ],
     "settings_panels": [
       {
-        "id": "rdp-vnc.settings",
-        "window": "rdp-vnc.hosts"
+        "id": "remote-screen.settings",
+        "window": "remote-screen.hosts"
       }
     ],
     "frontend": {
       "mode": "component",
-      "bundle": "ui/dist/rdp-vnc.js",
+      "bundle": "ui/dist/remote-screen.js",
       "slots": [
         "core.nav.workspace",
-        "core.window.body:rdp-vnc.main"
+        "core.window.body:remote-screen.main"
       ]
     }
   },
@@ -83,7 +83,7 @@
       "view_only": {
         "type": "boolean",
         "default": false,
-        "description": "Open every session read-only — the remote desktop is rendered but keyboard/mouse input is not forwarded."
+        "description": "Open every session read-only \u2014 the remote desktop is rendered but keyboard/mouse input is not forwarded."
       },
       "connect_timeout_s": {
         "type": "number",

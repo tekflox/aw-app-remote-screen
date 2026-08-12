@@ -1,9 +1,9 @@
-const U = "rdp-vnc.main";
+const U = "remote-screen.main";
 function P(e) {
   var C;
   const { useState: l, useEffect: k, useCallback: f, useRef: g } = e.React, y = e.app || ((C = e.sdk) == null ? void 0 : C.api) || {};
   async function u(o, d, n) {
-    const p = { method: o }, r = await y.fetch(`/api/apps/rdp-vnc${d}`, p);
+    const p = { method: o }, r = await y.fetch(`/api/apps/remote-screen${d}`, p);
     if (!r.ok) {
       let c = "";
       try {
@@ -16,7 +16,7 @@ function P(e) {
     return r.json();
   }
   function N(o, d, n) {
-    const p = y.wsUrl(`/api/apps/rdp-vnc/ws/bridge/${o}`), r = new URL(p), c = new URLSearchParams({
+    const p = y.wsUrl(`/api/apps/remote-screen/ws/bridge/${o}`), r = new URL(p), c = new URLSearchParams({
       host: r.hostname,
       port: r.port || (r.protocol === "wss:" ? "443" : "80"),
       // noVNC wants the path WITHOUT a leading slash.
@@ -112,7 +112,7 @@ function P(e) {
     }, [r, n]);
     const I = () => {
       var t;
-      h(!1), (t = window.__awOpenAppWindow) == null || t.call(window, "rdp-vnc.hosts");
+      h(!1), (t = window.__awOpenAppWindow) == null || t.call(window, "remote-screen.hosts");
     };
     return /* @__PURE__ */ e.h("div", { className: "flex flex-col h-full bg-black" }, /* @__PURE__ */ e.h("div", { className: "flex items-center gap-1.5 px-2 py-1.5 bg-[var(--color-bg-header)] border-b border-[var(--color-border)] shrink-0" }, /* @__PURE__ */ e.h("div", { className: "relative" }, /* @__PURE__ */ e.h(
       "button",
@@ -179,7 +179,7 @@ function P(e) {
           const { password: t } = await u("GET", `/hosts/${r}/credentials`);
           window.open(
             N(r, t, n),
-            `rdp-vnc-${r}`,
+            `remote-screen-${r}`,
             "popup=1,width=1280,height=800"
           );
         },

@@ -13,9 +13,9 @@
 -- upsert_by_name() treats the name as the human's natural key; enforce that in
 -- the DB too, so two rows can never disagree about which machine "office-mac"
 -- means (the monolith's JSON list happily allowed duplicates).
-CREATE UNIQUE INDEX IF NOT EXISTS "app__rdp-vnc__hosts_name_lower_key"
-    ON "app__rdp-vnc__hosts" (lower(name));
+CREATE UNIQUE INDEX IF NOT EXISTS "app__remote-screen__hosts_name_lower_key"
+    ON "app__remote-screen__hosts" (lower(name));
 
 -- list() orders by (sort_order, lower(name)) on every settings-panel render.
-CREATE INDEX IF NOT EXISTS "app__rdp-vnc__hosts_order_idx"
-    ON "app__rdp-vnc__hosts" (sort_order, lower(name));
+CREATE INDEX IF NOT EXISTS "app__remote-screen__hosts_order_idx"
+    ON "app__remote-screen__hosts" (sort_order, lower(name));

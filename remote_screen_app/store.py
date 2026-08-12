@@ -5,7 +5,7 @@ whose passwords were encrypted with ``src.api.secrets_crypto``, i.e. the same
 key as the NordVPN credentials) with the two mechanisms the app framework
 actually provides:
 
-* ``ctx.db`` (``db:own-tables``) — rows in ``app__rdp-vnc__hosts``, created in
+* ``ctx.db`` (``db:own-tables``) — rows in ``app__remote-screen__hosts``, created in
   this workspace's own schema under the enforced ``app__<slug>__`` prefix.
   The INITIAL shape is created here via ``ctx.db.create`` (idempotent
   ``CREATE TABLE IF NOT EXISTS``, journaled as ``db:table``); every later
@@ -46,13 +46,33 @@ TABLE_COLUMNS_SQL = """
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 """
 
-# Only VNC is actually bridgeable today (see routes.bridge). RDP is accepted as
-# a stored value so a host inventory can be migrated/entered ahead of the
-# protocol landing, and is rejected at connect time with a clear message
-# rather than silently opening a byte bridge noVNC can't speak.
-PROTOCOLS = ("vnc", "rdp")
+# The three protocols this app speaks. They are NOT one mechanism with three
+# labels — each is a distinct transport:
+#
+#   vnc     raw WebSocket<->TCP byte bridge to host:port; noVNC speaks RFB over it.
+#   rdp     same byte bridge, but no browser-side client exists that can drive a
+#           raw TCP tunnel — needs a server-side protocol translator
+#           (FreeRDP/Guacamole-shaped). Storable, not yet connectable.
+#   android no TCP endpoint at all: frames are polled with `adb exec-out
+#           screencap` over the remote-agent EXEC channel and pushed as PNGs,
+#           input goes back as `adb shell input`. See android.py.
+PROTOCOLS = ("vnc", "rdp", "android")
 
-SUPPORTED_PROTOCOLS = ("vnc",)
+# Protocols whose transport can actually reach a host and render today.
+SUPPORTED_PROTOCOLS = ("vnc", "android")
+
+# Protocols addressed by host:port rather than by a remote-agent profile id.
+TCP_PROTOCOLS = ("vnc", "rdp")
+
+# Columns added AFTER the initial shape, by migrations/0002_android_columns.sql.
+# Declared here too because standalone mode has no migration runner (see
+# __main__.py) — it applies these directly. test_schema_matches_migration
+# asserts the two never drift apart; edit both or neither.
+POST_INIT_COLUMNS = {
+    "device_serial": "TEXT NOT NULL DEFAULT ''",
+    "agent_base_url": "TEXT NOT NULL DEFAULT ''",
+    "adb_bin": "TEXT NOT NULL DEFAULT ''",
+}
 
 
 class HostError(ValueError):
@@ -78,7 +98,8 @@ class HostStore:
     def list(self) -> list[dict]:
         rows = self._ctx.db.execute(
             self._table,
-            "SELECT id, name, protocol, host, port, username, has_password, sort_order "
+            "SELECT id, name, protocol, host, port, username, has_password, sort_order, "
+            "device_serial, agent_base_url, adb_bin "
             "FROM {table} ORDER BY sort_order, lower(name)",
         )
         return [self._public(r) for r in rows]
@@ -86,7 +107,8 @@ class HostStore:
     def get(self, host_id: str) -> dict:
         rows = self._ctx.db.execute(
             self._table,
-            "SELECT id, name, protocol, host, port, username, has_password, sort_order "
+            "SELECT id, name, protocol, host, port, username, has_password, sort_order, "
+            "device_serial, agent_base_url, adb_bin "
             "FROM {table} WHERE id = :id",
             {"id": host_id},
         )
@@ -117,6 +139,9 @@ class HostStore:
             "username": row[5],
             "has_password": bool(row[6]),
             "sort_order": row[7],
+            "device_serial": row[8],
+            "agent_base_url": row[9],
+            "adb_bin": row[10],
             "supported": row[2] in SUPPORTED_PROTOCOLS,
         }
 
@@ -130,20 +155,28 @@ class HostStore:
             port = int(body.get("port") or 0)
         except (TypeError, ValueError):
             raise HostError("port must be a number")
-        if not name or not host or not port:
-            raise HostError("name, host and port are required")
-        if not 1 <= port <= 65535:
-            raise HostError("port must be between 1 and 65535")
         if protocol not in PROTOCOLS:
             raise HostError(f"protocol must be one of {', '.join(PROTOCOLS)}")
+        if not name or not host:
+            raise HostError("name and host are required")
+        if protocol in TCP_PROTOCOLS:
+            if not port:
+                raise HostError("port is required for vnc/rdp")
+            if not 1 <= port <= 65535:
+                raise HostError("port must be between 1 and 65535")
+        else:
+            # android is addressed by remote-agent profile id, not host:port.
+            port = 0
 
         password = body.get("password") or ""
         host_id = str(body.get("id") or _uuid.uuid4())
         self._ctx.db.execute(
             self._table,
             "INSERT INTO {table} "
-            "(id, name, protocol, host, port, username, has_password, sort_order) "
-            "VALUES (:id, :name, :protocol, :host, :port, :username, :has_password, :sort_order)",
+            "(id, name, protocol, host, port, username, has_password, sort_order, "
+            " device_serial, agent_base_url, adb_bin) "
+            "VALUES (:id, :name, :protocol, :host, :port, :username, :has_password, "
+            "        :sort_order, :device_serial, :agent_base_url, :adb_bin)",
             {
                 "id": host_id,
                 "name": name,
@@ -153,6 +186,9 @@ class HostStore:
                 "username": (body.get("username") or "").strip(),
                 "has_password": bool(password),
                 "sort_order": int(body.get("sort_order") or 0),
+                "device_serial": (body.get("device_serial") or "").strip(),
+                "agent_base_url": (body.get("agent_base_url") or "").strip(),
+                "adb_bin": (body.get("adb_bin") or "").strip(),
             },
         )
         if password:
@@ -173,15 +209,21 @@ class HostStore:
                            else int(body.get("sort_order"))),
         }
         try:
-            merged["port"] = int(merged["port"])
+            merged["port"] = int(merged["port"] or 0)
         except (TypeError, ValueError):
             raise HostError("port must be a number")
-        if not merged["name"] or not merged["host"]:
-            raise HostError("name and host cannot be blank")
-        if not 1 <= merged["port"] <= 65535:
-            raise HostError("port must be between 1 and 65535")
         if merged["protocol"] not in PROTOCOLS:
             raise HostError(f"protocol must be one of {', '.join(PROTOCOLS)}")
+        if not merged["name"] or not merged["host"]:
+            raise HostError("name and host cannot be blank")
+        if merged["protocol"] in TCP_PROTOCOLS:
+            if not 1 <= merged["port"] <= 65535:
+                raise HostError("port must be between 1 and 65535")
+        else:
+            merged["port"] = 0
+        for field in POST_INIT_COLUMNS:
+            merged[field] = (current[field] if body.get(field) is None
+                             else str(body[field]).strip())
 
         # Password is optional on update — omit/blank to KEEP the existing one,
         # so editing a name or port doesn't force re-typing it. An explicit
@@ -198,7 +240,9 @@ class HostStore:
             self._table,
             "UPDATE {table} SET name = :name, protocol = :protocol, host = :host, "
             "port = :port, username = :username, has_password = :has_password, "
-            "sort_order = :sort_order, updated_at = now() WHERE id = :id",
+            "sort_order = :sort_order, device_serial = :device_serial, "
+            "agent_base_url = :agent_base_url, adb_bin = :adb_bin, "
+            "updated_at = now() WHERE id = :id",
             {**merged, "has_password": has_password, "id": host_id},
         )
         return self.get(host_id)

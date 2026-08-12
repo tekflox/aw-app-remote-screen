@@ -1,10 +1,10 @@
-# aw-app-rdp-vnc — Remote Desktop
+# aw-app-remote-screen — Remote Desktop
 
 Browser-side remote desktop for aw-workspace. Ported from the aw monolith
 (`src/api/routes/remote_desktop.py` + `src/app/src/components/RemoteDesktopWindow.jsx`).
 
 - **Viewer** — the vendored noVNC client in an iframe, fed by a raw
-  WebSocket→TCP byte bridge (`/api/apps/rdp-vnc/ws/bridge/{id}`). No
+  WebSocket→TCP byte bridge (`/api/apps/remote-screen/ws/bridge/{id}`). No
   VNC-protocol awareness on the server side; byte-for-byte websockify, same as
   the monolith's `/ws/remote-desktop/{id}`.
 - **Hosts** — add / edit / remove saved machines from **Settings › Remote
@@ -14,7 +14,7 @@ Browser-side remote desktop for aw-workspace. Ported from the aw monolith
 
 | | monolith | this app |
 |---|---|---|
-| Host list | `src/config/remote_desktop.json` (flat file) | `app__rdp-vnc__hosts` Postgres table (`db:own-tables`) |
+| Host list | `src/config/remote_desktop.json` (flat file) | `app__remote-screen__hosts` Postgres table (`db:own-tables`) |
 | Passwords | same JSON file, encrypted with `secrets_crypto` (the NordVPN key) | workspace secret store, one secret per host (`secrets:own`) |
 | Schema changes | edit the file | numbered SQL in `migrations/` |
 | Android emulator | wedged into the same connection picker | removed — unrelated transport, belongs to whichever app owns the emulator |
@@ -36,7 +36,7 @@ Split of responsibilities:
 - **`migrations/NNNN_*.sql`** — everything after that: added columns,
   indexes, constraints, backfills.
 
-Write migration SQL **unqualified** (`CREATE INDEX ... ON "app__rdp-vnc__hosts"`).
+Write migration SQL **unqualified** (`CREATE INDEX ... ON "app__remote-screen__hosts"`).
 The schema name is per-tenant and unknown at authoring time; core sets
 `search_path` for the migration's transaction.
 
@@ -73,7 +73,7 @@ carry, because there is no browser-side RDP client to put on the other end.
 ## Layout
 
 ```
-rdp_vnc_app/
+remote_screen_app/
   plugin.py     activate(ctx) — routes + store
   store.py      hosts table (ctx.db) + passwords (ctx.secrets)
   routes.py     REST CRUD, /ui/hosts, WS bridge
@@ -91,7 +91,7 @@ supports `markdown`, `list`, `button`, `iframe`, `app_iframe`, `collapsible`,
 `form`, `auth_status`. Its `list` renders **static** items from the spec, and
 there is **no `table` widget** — so a widget spec cannot render a live,
 editable list of rows. `iframe { src: "/api/*" }` is the vocabulary's own
-escape hatch, so `windows/hosts.json` points at `/api/apps/rdp-vnc/ui/hosts`
+escape hatch, so `windows/hosts.json` points at `/api/apps/remote-screen/ui/hosts`
 (`hosts_ui.py`): one dependency-free HTML page with the full CRUD, behind the
 same IdentityGuard as every other route.
 
@@ -114,5 +114,5 @@ by aw-workspace's `src/tests/integration/apps/test_db_tables.py`.
 ## Building the frontend
 
 ```bash
-cd ui && npm install && npm run build   # -> ui/dist/rdp-vnc.js
+cd ui && npm install && npm run build   # -> ui/dist/remote-screen.js
 ```

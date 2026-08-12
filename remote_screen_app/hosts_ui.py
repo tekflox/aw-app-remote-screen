@@ -66,14 +66,21 @@ HOSTS_UI_HTML = """<!doctype html>
   <label for="protocol">Protocol</label>
   <select id="protocol">
     <option value="vnc">VNC</option>
+    <option value="android">Android (screen mirror over the agent exec channel)</option>
     <option value="rdp">RDP (stored only &mdash; no browser client yet)</option>
   </select>
-  <label for="host">Host</label>
+  <label for="host" id="host-label">Host</label>
   <input id="host" placeholder="127.0.0.1" required>
-  <div class="hint">Resolved from inside this workspace, not from your laptop &mdash; a machine
-    on your own LAN needs a reachable address or a tunnel.</div>
-  <label for="port">Port</label>
-  <input id="port" type="number" min="1" max="65535" placeholder="5900" required>
+  <div class="hint" id="host-hint">Resolved from inside this workspace, not from your laptop
+    &mdash; a machine on your own LAN needs a reachable address or a tunnel.</div>
+  <label for="port" id="port-label">Port</label>
+  <input id="port" type="number" min="1" max="65535" placeholder="5900">
+  <label for="device_serial" id="serial-label">Device serial</label>
+  <input id="device_serial" placeholder="emulator-5554 (blank = only attached device)">
+  <label for="adb_bin" id="adb-label">adb path</label>
+  <input id="adb_bin" placeholder="~/Android/platform-tools/adb">
+  <label for="agent_base_url" id="agent-label">Agent URL</label>
+  <input id="agent_base_url" placeholder="http://127.0.0.1:10005">
   <label for="username">Username</label>
   <input id="username" placeholder="(optional)">
   <label for="password">Password</label>
@@ -86,7 +93,7 @@ HOSTS_UI_HTML = """<!doctype html>
 </form>
 
 <script>
-const BASE = '/api/apps/rdp-vnc';
+const BASE = '/api/apps/remote-screen';
 const $ = (id) => document.getElementById(id);
 
 async function call(method, path, body) {
@@ -123,7 +130,8 @@ function render() {
     '<th></th></tr></thead><tbody>' +
     hosts.map((h) =>
       '<tr><td>' + esc(h.name) + '</td>' +
-      '<td class="addr">' + esc(h.host) + ':' + h.port + '</td>' +
+      '<td class="addr">' + esc(h.host) + (h.port ? ':' + h.port : '') +
+        (h.device_serial ? ' / ' + esc(h.device_serial) : '') + '</td>' +
       '<td>' + esc(h.protocol.toUpperCase()) + (h.supported ? '' : ' \\u26a0') + '</td>' +
       '<td>' + (h.has_password ? 'saved' : '\\u2014') + '</td>' +
       '<td class="actions">' +
@@ -137,6 +145,27 @@ async function refresh() {
   render();
 }
 
+const ANDROID_ONLY = ['device_serial', 'adb_bin', 'agent_base_url'];
+const TCP_ONLY = ['port'];
+
+function rowOf(id) { return [$(id), document.querySelector('label[for="' + id + '"]')]; }
+
+// A form that shows "Port" for an Android device and "adb path" for a VNC box
+// teaches the wrong model of what each protocol needs, so swap the halves
+// rather than showing everything greyed out.
+function applyProtocol() {
+  const android = $('protocol').value === 'android';
+  for (const id of ANDROID_ONLY) rowOf(id).forEach((el) => { if (el) el.hidden = !android; });
+  for (const id of TCP_ONLY) rowOf(id).forEach((el) => { if (el) el.hidden = android; });
+  $('host-label').textContent = android ? 'Agent profile' : 'Host';
+  $('host-hint').innerHTML = android
+    ? 'The remote-agent profile id of the machine the device is attached to (e.g. <code>macbook-fred</code>) &mdash; not a hostname; there is no TCP endpoint.'
+    : 'Resolved from inside this workspace, not from your laptop &mdash; a machine on your own LAN needs a reachable address or a tunnel.';
+  $('port').required = !android;
+}
+
+$('protocol').addEventListener('change', applyProtocol);
+
 function resetForm() {
   $('id').value = '';
   $('form').reset();
@@ -145,6 +174,7 @@ function resetForm() {
   $('save').textContent = 'Add host';
   $('cancel').hidden = true;
   $('pw-hint').textContent = '';
+  applyProtocol();
 }
 
 function loadForEdit(id) {
@@ -157,6 +187,8 @@ function loadForEdit(id) {
   $('port').value = h.port;
   $('username').value = h.username || '';
   $('password').value = '';
+  for (const id of ANDROID_ONLY) $(id).value = h[id] || '';
+  applyProtocol();
   $('form-title').textContent = 'Edit ' + h.name;
   $('save').textContent = 'Save changes';
   $('cancel').hidden = false;
@@ -195,6 +227,9 @@ $('form').addEventListener('submit', async (e) => {
     port: Number($('port').value),
     username: $('username').value.trim(),
   };
+  if (body.protocol === 'android') {
+    for (const id of ANDROID_ONLY) body[id] = $(id).value.trim();
+  }
   if ($('password').value) body.password = $('password').value;
   try {
     if (id) await call('PUT', '/hosts/' + encodeURIComponent(id), body);
@@ -205,6 +240,7 @@ $('form').addEventListener('submit', async (e) => {
   } catch (err) { say(esc(err.message), 'err'); }
 });
 
+applyProtocol();
 refresh().catch((err) => say('Could not load hosts: ' + esc(err.message), 'err'));
 </script>
 </body>

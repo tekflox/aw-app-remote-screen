@@ -1,7 +1,7 @@
 // Integrated-mode entrypoint — dynamic-imported by aw-workspace-ui's
 // loadComponentPlugin() once this app is installed with "ui:code" +
 // "ui:slots:core.nav.workspace" granted. Built by `npm run build` ->
-// ui/dist/rdp-vnc.js, referenced from aw-app.json's contributes.frontend.bundle.
+// ui/dist/remote-screen.js, referenced from aw-app.json's contributes.frontend.bundle.
 //
 // Ported from the monolith's src/app/src/components/RemoteDesktopWindow.jsx,
 // with three deliberate changes:
@@ -20,7 +20,7 @@
 //    which builds its own socket. Deriving host/port from host.app.wsUrl() is
 //    what makes the bridge connect on a tunneled workspace at all.
 
-const WIN_ID = 'rdp-vnc.main';
+const WIN_ID = 'remote-screen.main';
 
 export function register(host) {
   const { useState, useEffect, useCallback, useRef } = host.React;
@@ -32,7 +32,7 @@ export function register(host) {
       init.headers = { 'Content-Type': 'application/json' };
       init.body = JSON.stringify(body);
     }
-    const res = await api.fetch(`/api/apps/rdp-vnc${path}`, init);
+    const res = await api.fetch(`/api/apps/remote-screen${path}`, init);
     if (!res.ok) {
       let detail = '';
       try { detail = (await res.json()).detail || ''; } catch (_e) { detail = await res.text(); }
@@ -45,7 +45,7 @@ export function register(host) {
   // from the SPA origin. It takes host/port/path separately, so point it at
   // the workspace API origin explicitly (see header note 3).
   function novncUrl(hostId, password, settings) {
-    const wsHref = api.wsUrl(`/api/apps/rdp-vnc/ws/bridge/${hostId}`);
+    const wsHref = api.wsUrl(`/api/apps/remote-screen/ws/bridge/${hostId}`);
     const u = new URL(wsHref);
     const params = new URLSearchParams({
       host: u.hostname,
@@ -176,7 +176,7 @@ export function register(host) {
     // global "open app settings" helper in the SPA, only __awOpenAppWindow.
     const openSettings = () => {
       setPickerOpen(false);
-      window.__awOpenAppWindow?.('rdp-vnc.hosts');
+      window.__awOpenAppWindow?.('remote-screen.hosts');
     };
 
     return (
@@ -240,7 +240,7 @@ export function register(host) {
               if (!selectedId) return;
               const { password } = await call('GET', `/hosts/${selectedId}/credentials`);
               window.open(novncUrl(selectedId, password, settings),
-                `rdp-vnc-${selectedId}`, 'popup=1,width=1280,height=800');
+                `remote-screen-${selectedId}`, 'popup=1,width=1280,height=800');
             }}
             disabled={!selectedId}
             className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"

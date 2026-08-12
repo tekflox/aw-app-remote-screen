@@ -1,9 +1,9 @@
 {
-  "name": "rdp-vnc-app-ui",
+  "name": "remote-screen-app-ui",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Component-mode frontend for aw-app-rdp-vnc — the Remote Desktop row in the Workspace nav (core.nav.workspace) and the noVNC viewer window body (core.window.body:rdp-vnc.main). Host CRUD lives in the declarative settings panel (windows/hosts.json), not here.",
+  "description": "Component-mode frontend for aw-app-remote-screen — the Remote Desktop row in the Workspace nav (core.nav.workspace) and the noVNC viewer window body (core.window.body:remote-screen.main). Host CRUD lives in the declarative settings panel (windows/hosts.json), not here.",
   "scripts": { "dev": "vite", "build": "vite build" },
   "devDependencies": { "vite": "^5.4.0" }
 }

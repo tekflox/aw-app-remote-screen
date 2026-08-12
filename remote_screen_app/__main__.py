@@ -1,8 +1,8 @@
 """Standalone entrypoint (ADR Decision 4) — run this app WITHOUT the
 aw-workspace runtime:
 
-    python -m rdp_vnc_app                 # binds 127.0.0.1:9410
-    PORT=9411 python -m rdp_vnc_app
+    python -m remote_screen_app                 # binds 127.0.0.1:9410
+    PORT=9411 python -m remote_screen_app
 
 Standalone has no ``ctx``, so there is no ``ctx.db`` / ``ctx.secrets`` and no
 workspace Postgres schema to write into. Rather than pretend, this mode backs
@@ -25,9 +25,9 @@ import uvicorn
 from fastapi import FastAPI
 
 from .routes import build_routes
-from .store import TABLE_COLUMNS_SQL, HostStore
+from .store import POST_INIT_COLUMNS, TABLE_COLUMNS_SQL, HostStore
 
-SLUG = "rdp-vnc"  # must match aw-app.json's "id"
+SLUG = "remote-screen"  # must match aw-app.json's "id"
 DEFAULT_PORT = 9410  # must match aw-app.json's runtime.standalone.default_port
 
 APP_ROOT = Path(__file__).resolve().parent.parent
@@ -62,6 +62,19 @@ class _SqliteCtx:
                     .replace("DEFAULT now()", "DEFAULT CURRENT_TIMESTAMP")
                     .replace("BOOLEAN", "INTEGER"))
             self._conn.execute(f'CREATE TABLE IF NOT EXISTS "{name}" ({cols})')
+            # Standalone has NO migration runner, so the columns added by
+            # migrations/*.sql after the initial shape are applied here instead.
+            # SQLite has no ADD COLUMN IF NOT EXISTS, hence the duplicate-column
+            # swallow. tests/test_store_and_routes.py::
+            # test_post_init_columns_match_migration keeps the two in sync.
+            for col, ddl in POST_INIT_COLUMNS.items():
+                try:
+                    self._conn.execute(
+                        f'ALTER TABLE "{name}" ADD COLUMN {col} '
+                        + ddl.replace("TIMESTAMPTZ", "TEXT").replace("BOOLEAN", "INTEGER"))
+                except sqlite3.OperationalError as e:
+                    if "duplicate column" not in str(e):
+                        raise
             self._conn.commit()
             return name
 
@@ -100,7 +113,7 @@ class _SqliteCtx:
 
 
 def build_standalone_app() -> FastAPI:
-    app = FastAPI(title="rdp-vnc (standalone)")
+    app = FastAPI(title="remote-screen (standalone)")
     ctx = _SqliteCtx(DATA_DIR / "hosts.sqlite3")
     # Touch TABLE_COLUMNS_SQL through the store so both modes share one schema
     # definition rather than drifting apart.

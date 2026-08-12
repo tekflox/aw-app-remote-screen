@@ -5,7 +5,7 @@ Reads ``<monolith>/src/config/remote_desktop.json`` — the flat
 replaces — decrypts each password with the monolith's OWN
 ``src.api.secrets_crypto`` key (the same key that file was written with), and
 POSTs the result to this app's ``/hosts/upsert``, which writes the row to
-``app__rdp-vnc__hosts`` and the password to the workspace secret store.
+``app__remote-screen__hosts`` and the password to the workspace secret store.
 
 Upsert-by-name makes it re-runnable: importing twice updates the same hosts
 instead of duplicating them.
@@ -65,7 +65,7 @@ def make_decryptor(monolith: Path):
 
 def post(api: str, api_key: str, body: dict) -> dict:
     req = urllib.request.Request(
-        f"{api.rstrip('/')}/api/apps/rdp-vnc/hosts/upsert",
+        f"{api.rstrip('/')}/api/apps/remote-screen/hosts/upsert",
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json", "X-Api-Key": api_key},
         method="POST",

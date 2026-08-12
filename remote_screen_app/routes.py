@@ -1,6 +1,6 @@
-"""rdp_vnc_app's mode-agnostic FastAPI sub-app.
+"""remote_screen_app's mode-agnostic FastAPI sub-app.
 
-Mounted at ``/api/apps/rdp-vnc`` in both modes (integrated: behind the
+Mounted at ``/api/apps/remote-screen`` in both modes (integrated: behind the
 runtime's IdentityGuard; standalone: by ``__main__.py``), so every path here
 is RELATIVE — see ``aw-app-template/template_app/routes.py`` for the contract.
 
@@ -28,10 +28,11 @@ import logging
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
+from . import android as android_mod
 from .hosts_ui import HOSTS_UI_HTML
-from .store import HostError, HostNotFound, HostStore, SUPPORTED_PROTOCOLS
+from .store import HostError, HostNotFound, HostStore, TCP_PROTOCOLS
 
-log = logging.getLogger("aw_apps.rdp-vnc")
+log = logging.getLogger("aw_apps.remote-screen")
 
 # WebSocket close codes — distinct per failure so the frontend can say what
 # actually went wrong instead of a generic "connection lost".
@@ -41,7 +42,7 @@ WS_CONNECT_FAILED = 4502
 
 
 def build_routes(ctx, store: HostStore) -> FastAPI:
-    app = FastAPI(title="rdp-vnc")
+    app = FastAPI(title="remote-screen")
 
     def _connect_timeout() -> float:
         return float((getattr(ctx, "config", {}) or {}).get("connect_timeout_s") or 10)
@@ -108,6 +109,28 @@ def build_routes(ctx, store: HostStore) -> FastAPI:
         widgets. Behind IdentityGuard like every other route here."""
         return HTMLResponse(HOSTS_UI_HTML)
 
+    @app.get("/hosts/{host_id}/android/status")
+    async def android_status(host_id: str) -> dict:
+        try:
+            row = store.get(host_id)
+        except HostNotFound:
+            raise HTTPException(404, "Host not found")
+        if row["protocol"] != "android":
+            raise HTTPException(400, "not an android host")
+        return await android_mod.status(row)
+
+    @app.websocket("/ws/android/{host_id}")
+    async def android_stream(ws: WebSocket, host_id: str) -> None:
+        try:
+            row = store.get(host_id)
+        except HostNotFound:
+            await ws.close(code=WS_NOT_FOUND)
+            return
+        if row["protocol"] != "android":
+            await ws.close(code=WS_UNSUPPORTED_PROTOCOL)
+            return
+        await android_mod.stream(ws, row)
+
     # ── WebSocket: raw byte bridge to host:port (websockify-equivalent) ─────
 
     @app.websocket("/ws/bridge/{host_id}")
@@ -117,8 +140,8 @@ def build_routes(ctx, store: HostStore) -> FastAPI:
         except HostNotFound:
             await ws.close(code=WS_NOT_FOUND)
             return
-        if row["protocol"] not in SUPPORTED_PROTOCOLS:
-            log.warning("rdp-vnc %s: protocol %s has no browser client yet",
+        if row["protocol"] not in TCP_PROTOCOLS or not row["supported"]:
+            log.warning("remote-screen %s: protocol %s has no browser client yet",
                         host_id, row["protocol"])
             await ws.close(code=WS_UNSUPPORTED_PROTOCOL)
             return
@@ -130,7 +153,7 @@ def build_routes(ctx, store: HostStore) -> FastAPI:
                 timeout=_connect_timeout(),
             )
         except Exception as e:
-            log.warning("rdp-vnc %s: connect to %s:%s failed: %s",
+            log.warning("remote-screen %s: connect to %s:%s failed: %s",
                         host_id, row["host"], row["port"], e)
             await ws.close(code=WS_CONNECT_FAILED)
             return
