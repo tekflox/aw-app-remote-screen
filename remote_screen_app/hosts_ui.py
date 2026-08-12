@@ -75,6 +75,12 @@ HOSTS_UI_HTML = """<!doctype html>
     &mdash; a machine on your own LAN needs a reachable address or a tunnel.</div>
   <label for="port" id="port-label">Port</label>
   <input id="port" type="number" min="1" max="65535" placeholder="5900">
+  <label for="agent_kind" id="kind-label">Exec channel</label>
+  <select id="agent_kind">
+    <option value="aw_remote_host">Linked remote host (this workspace)</option>
+    <option value="remote_agent">Legacy remote-agent backend</option>
+  </select>
+  <div class="hint" id="kind-hint"></div>
   <label for="device_serial" id="serial-label">Device serial</label>
   <input id="device_serial" placeholder="emulator-5554 (blank = only attached device)">
   <label for="adb_bin" id="adb-label">adb path</label>
@@ -145,7 +151,7 @@ async function refresh() {
   render();
 }
 
-const ANDROID_ONLY = ['device_serial', 'adb_bin', 'agent_base_url'];
+const ANDROID_ONLY = ['device_serial', 'adb_bin', 'agent_base_url', 'agent_kind'];
 const TCP_ONLY = ['port'];
 
 function rowOf(id) { return [$(id), document.querySelector('label[for="' + id + '"]')]; }
@@ -162,7 +168,24 @@ function applyProtocol() {
     ? 'The remote-agent profile id of the machine the device is attached to (e.g. <code>macbook-fred</code>) &mdash; not a hostname; there is no TCP endpoint.'
     : 'Resolved from inside this workspace, not from your laptop &mdash; a machine on your own LAN needs a reachable address or a tunnel.';
   $('port').required = !android;
+  applyAgentKind();
 }
+
+// The two channels want DIFFERENT things in `host`, and getting that wrong is
+// the most likely way to end up with a host that just times out: one wants a
+// linked-host id, the other a remote-agent profile name.
+function applyAgentKind() {
+  const android = $('protocol').value === 'android';
+  const legacy = $('agent_kind').value === 'remote_agent';
+  $('kind-hint').hidden = !android;
+  $('kind-hint').innerHTML = legacy
+    ? 'Monolith path &mdash; reachable only from inside that deployment. <b>Agent profile</b> is the profile name (e.g. <code>macbook-fred</code>).'
+    : 'Goes through aw-backend over the /link tunnel the host already holds open. <b>Agent profile</b> must be the <b>linked host id</b> (see Remote Hosts).';
+  for (const el of [$('agent_base_url'), document.querySelector('label[for="agent_base_url"]')]) {
+    if (el) el.hidden = !android || !legacy;
+  }
+}
+$('agent_kind').addEventListener('change', applyAgentKind);
 
 $('protocol').addEventListener('change', applyProtocol);
 

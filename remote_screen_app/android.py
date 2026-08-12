@@ -25,6 +25,9 @@ import json
 import logging
 import shlex
 
+import os
+from pathlib import Path
+
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -54,9 +57,35 @@ def adb(row: dict) -> str:
     return f"{adb_bin(row)} -s {serial}" if serial else adb_bin(row)
 
 
-async def exec_ndjson(client: httpx.AsyncClient, row: dict, command: str,
-                      timeout: float = 30) -> list[dict]:
-    """POST to the remote-agent exec endpoint and parse its ndjson response."""
+WORKSPACE_DIR = os.environ.get("AW_WORKSPACE_CONTAINER_DIR", "/opt/aw-workspace")
+DEFAULT_BACKEND_URL = "http://127.0.0.1:9025"
+
+
+def _env(name: str) -> str:
+    """os.environ first, then <AW_WORKSPACE_HOME>/.env — the app process and a
+    cross-container caller see different environments but the same file. The
+    remote-host-cli plugin republishes these on every activate."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    env_file = Path(os.environ.get(
+        "AW_WORKSPACE_ENV_FILE", f"{WORKSPACE_DIR}/.aw-workspace/.env"))
+    if not env_file.is_file():
+        return ""
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        if key.strip() == name:
+            return val.strip().strip('"').strip("'")
+    return ""
+
+
+async def _exec_remote_agent(client: httpx.AsyncClient, row: dict, command: str,
+                             timeout: float) -> list[dict]:
+    """Legacy monolith path: a remote-agent backend in the caller's own netns,
+    streaming ndjson straight back."""
     resp = await client.post(
         f"{agent_url(row)}/api/clients/{row['host']}/exec",
         json={"command": command, "timeout": timeout},
@@ -64,6 +93,50 @@ async def exec_ndjson(client: httpx.AsyncClient, row: dict, command: str,
     )
     resp.raise_for_status()
     return [json.loads(line) for line in resp.text.splitlines() if line.strip()]
+
+
+async def _exec_aw_remote_host(client: httpx.AsyncClient, row: dict, command: str,
+                               timeout: float) -> list[dict]:
+    """This workspace's own path: aw-backend relays the command over the /link
+    WebSocket the host already holds open. It is start+wait rather than a
+    stream, so the result is adapted into the same ndjson shape ``collect()``
+    already understands — that keeps one parser for both channels."""
+    backend = (_env("AW_BACKEND_URL") or DEFAULT_BACKEND_URL).rstrip("/")
+    workspace, token = _env("AW_WORKSPACE"), _env("AW_WORKSPACE_HOST_TOKEN")
+    if not (workspace and token):
+        raise RuntimeError(
+            "AW_WORKSPACE / AW_WORKSPACE_HOST_TOKEN are not published — this "
+            "only works inside a workspace that completed the /link handshake")
+    base = f"{backend}/api/workspaces/{workspace}/remote-hosts/{row['host']}"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    started = await client.post(f"{base}/exec", json={"command": command,
+                                                      "timeout_s": timeout},
+                                headers=headers, timeout=timeout + 15)
+    started.raise_for_status()
+    job_id = started.json().get("job_id")
+    if not job_id:
+        raise RuntimeError(f"exec did not return a job_id: {started.text[:200]}")
+
+    done = await client.post(f"{base}/exec/{job_id}/wait", json={"timeout_s": timeout},
+                             headers=headers, timeout=timeout + 30)
+    done.raise_for_status()
+    result = done.json()
+    return [
+        {"stream": "stdout", "data": result.get("stdout") or ""},
+        {"stream": "stderr", "data": result.get("stderr") or ""},
+        {"done": True, "returncode": result.get("exit_code",
+                                                result.get("returncode", 0)) or 0},
+    ]
+
+
+async def exec_ndjson(client: httpx.AsyncClient, row: dict, command: str,
+                      timeout: float = 30) -> list[dict]:
+    """Run one command on the machine this host row points at, over whichever
+    exec channel it is configured for."""
+    if (row.get("agent_kind") or "aw_remote_host") == "remote_agent":
+        return await _exec_remote_agent(client, row, command, timeout)
+    return await _exec_aw_remote_host(client, row, command, timeout)
 
 
 def collect(lines: list[dict]) -> tuple[str, str, int]:

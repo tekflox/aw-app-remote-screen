@@ -72,7 +72,11 @@ POST_INIT_COLUMNS = {
     "device_serial": "TEXT NOT NULL DEFAULT ''",
     "agent_base_url": "TEXT NOT NULL DEFAULT ''",
     "adb_bin": "TEXT NOT NULL DEFAULT ''",
+    "agent_kind": "TEXT NOT NULL DEFAULT 'aw_remote_host'",
 }
+
+# How an android host's exec channel is reached — see migrations/0003.
+AGENT_KINDS = ("aw_remote_host", "remote_agent")
 
 
 class HostError(ValueError):
@@ -99,7 +103,7 @@ class HostStore:
         rows = self._ctx.db.execute(
             self._table,
             "SELECT id, name, protocol, host, port, username, has_password, sort_order, "
-            "device_serial, agent_base_url, adb_bin "
+            "device_serial, agent_base_url, adb_bin, agent_kind "
             "FROM {table} ORDER BY sort_order, lower(name)",
         )
         return [self._public(r) for r in rows]
@@ -108,7 +112,7 @@ class HostStore:
         rows = self._ctx.db.execute(
             self._table,
             "SELECT id, name, protocol, host, port, username, has_password, sort_order, "
-            "device_serial, agent_base_url, adb_bin "
+            "device_serial, agent_base_url, adb_bin, agent_kind "
             "FROM {table} WHERE id = :id",
             {"id": host_id},
         )
@@ -142,6 +146,7 @@ class HostStore:
             "device_serial": row[8],
             "agent_base_url": row[9],
             "adb_bin": row[10],
+            "agent_kind": row[11] or "aw_remote_host",
             "supported": row[2] in SUPPORTED_PROTOCOLS,
         }
 
@@ -174,9 +179,10 @@ class HostStore:
             self._table,
             "INSERT INTO {table} "
             "(id, name, protocol, host, port, username, has_password, sort_order, "
-            " device_serial, agent_base_url, adb_bin) "
+            " device_serial, agent_base_url, adb_bin, agent_kind) "
             "VALUES (:id, :name, :protocol, :host, :port, :username, :has_password, "
-            "        :sort_order, :device_serial, :agent_base_url, :adb_bin)",
+            "        :sort_order, :device_serial, :agent_base_url, :adb_bin, "
+            "        :agent_kind)",
             {
                 "id": host_id,
                 "name": name,
@@ -189,6 +195,7 @@ class HostStore:
                 "device_serial": (body.get("device_serial") or "").strip(),
                 "agent_base_url": (body.get("agent_base_url") or "").strip(),
                 "adb_bin": (body.get("adb_bin") or "").strip(),
+                "agent_kind": (body.get("agent_kind") or "aw_remote_host").strip(),
             },
         )
         if password:
@@ -242,6 +249,7 @@ class HostStore:
             "port = :port, username = :username, has_password = :has_password, "
             "sort_order = :sort_order, device_serial = :device_serial, "
             "agent_base_url = :agent_base_url, adb_bin = :adb_bin, "
+            "agent_kind = :agent_kind, "
             "updated_at = now() WHERE id = :id",
             {**merged, "has_password": has_password, "id": host_id},
         )

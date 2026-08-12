@@ -150,11 +150,13 @@ def test_hosts_ui_page_is_served_and_self_contained(client):
 
 def test_post_init_columns_match_migration():
     """POST_INIT_COLUMNS is duplicated in store.py (for standalone, which has no
-    migration runner) and migrations/0002. Drift means standalone silently
-    lacks a column the store SELECTs, so pin them together."""
+    migration runner) and in the migrations. Drift means standalone silently
+    lacks a column the store SELECTs, so pin them together. Scans the whole
+    migrations dir, not one file — columns arrive in different numbered files
+    as the app grows."""
     from remote_screen_app.store import POST_INIT_COLUMNS
-    sql = (Path(__file__).resolve().parent.parent
-           / "migrations" / "0002_android_columns.sql").read_text()
+    mig_dir = Path(__file__).resolve().parent.parent / "migrations"
+    sql = "\n".join(p.read_text() for p in sorted(mig_dir.glob("*.sql")))
     for col in POST_INIT_COLUMNS:
         assert f"ADD COLUMN IF NOT EXISTS {col}" in sql, col
 
@@ -226,3 +228,19 @@ def test_text_input_is_shell_quoted():
 def test_android_endpoints_reject_a_vnc_host(client):
     vnc = client.post("/hosts", json={"name": "mac", "host": "10.0.0.5", "port": 5900}).json()
     assert client.get(f"/hosts/{vnc['id']}/android/status").status_code == 400
+
+
+def test_android_defaults_to_this_workspaces_exec_channel(store):
+    """The monolith's remote-agent endpoint lives in ITS netns and is not
+    reachable from aw-workspace, so defaulting a new host to it would make
+    every android host fail with a confusing connection error."""
+    row = store.create({"name": "pixel", "protocol": "android", "host": "hostid"})
+    assert row["agent_kind"] == "aw_remote_host"
+
+
+def test_legacy_remote_agent_channel_is_still_selectable(store):
+    row = store.create({"name": "legacy", "protocol": "android", "host": "macbook-fred",
+                        "agent_kind": "remote_agent",
+                        "agent_base_url": "http://127.0.0.1:10005"})
+    assert row["agent_kind"] == "remote_agent"
+    assert row["agent_base_url"] == "http://127.0.0.1:10005"
