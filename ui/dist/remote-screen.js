@@ -1,16 +1,16 @@
 const N = "remote-screen.main";
-function K(e) {
-  const { useState: C, useEffect: h, useCallback: W, useRef: g, useSyncExternalStore: $ } = e.React, y = e.app;
-  async function k(r, o, a) {
-    const c = { method: r }, l = await y.fetch(o, c);
+function O(e) {
+  const { useState: C, useEffect: x, useCallback: W, useRef: b, useSyncExternalStore: M } = e.React, g = e.app;
+  async function y(r, o, a) {
+    const c = { method: r }, l = await g.fetch(o, c);
     if (!l.ok) {
-      let u = "";
+      let f = "";
       try {
-        u = (await l.json()).detail || "";
+        f = (await l.json()).detail || "";
       } catch {
-        u = await l.text();
+        f = await l.text();
       }
-      throw new Error(`${l.status}: ${u}`);
+      throw new Error(`${l.status}: ${f}`);
     }
     return l.json();
   }
@@ -41,8 +41,8 @@ function K(e) {
       return t.loading || (t.loading = (async () => {
         try {
           const [{ hosts: r }, o] = await Promise.all([
-            k("GET", "/hosts"),
-            k("GET", "/settings")
+            y("GET", "/hosts"),
+            y("GET", "/settings")
           ]);
           t.set({ hosts: r || [], settings: o, error: null }), !t.state.selectedId && (r != null && r.length) && t.select(r[0].id);
         } catch (r) {
@@ -54,6 +54,15 @@ function K(e) {
     },
     select(r) {
       t.set({ selectedId: r }), t.connect(r);
+    },
+    // Android's three system buttons. They are not part of the mirrored
+    // framebuffer — screencap captures the app surface, while Back/Home/
+    // Recents are the OS navigation bar, so without these the device is
+    // effectively view-only past the first screen. `adb shell input keyevent`
+    // is the same channel taps already use.
+    sendKey(r) {
+      const o = t.androidWs;
+      (o == null ? void 0 : o.readyState) === WebSocket.OPEN && o.send(JSON.stringify({ type: "key", code: r }));
     },
     async connect(r) {
       const o = t.state.hosts.find((a) => a.id === r);
@@ -67,9 +76,9 @@ function K(e) {
             t.creds = null, t.set({ src: "android", srcKey: t.state.srcKey + 1, error: null });
             return;
           }
-          const a = await k("GET", `/hosts/${r}/credentials`);
+          const a = await y("GET", `/hosts/${r}/credentials`);
           t.creds = a, t.set({
-            src: E(r, a.password, t.state.settings),
+            src: B(r, a.password, t.state.settings),
             srcKey: t.state.srcKey + 1,
             error: null
           });
@@ -79,11 +88,11 @@ function K(e) {
       }
     }
   };
-  function R() {
-    return $(t.subscribe, t.get);
+  function S() {
+    return M(t.subscribe, t.get);
   }
-  function E(r, o, a) {
-    const c = new URL(y.wsUrl(`/ws/bridge/${r}`)), l = new URLSearchParams({
+  function B(r, o, a) {
+    const c = new URL(g.wsUrl(`/ws/bridge/${r}`)), l = new URLSearchParams({
       host: c.hostname,
       port: c.port || (c.protocol === "wss:" ? "443" : "80"),
       path: c.pathname.replace(/^\//, "") + c.search,
@@ -96,7 +105,7 @@ function K(e) {
     });
     return o && l.set("password", o), `/novnc/vnc.html?${l.toString()}`;
   }
-  function I({ className: r }) {
+  function K({ className: r }) {
     return /* @__PURE__ */ e.h(
       "svg",
       {
@@ -112,11 +121,11 @@ function K(e) {
       /* @__PURE__ */ e.h("path", { d: "M8 21h8M12 17v4" })
     );
   }
-  const S = () => {
+  const R = () => {
     var r;
     return (r = window.__awOpenAppWindow) == null ? void 0 : r.call(window, "remote-screen.hosts");
   };
-  function B() {
+  function $() {
     return /* @__PURE__ */ e.h(
       "button",
       {
@@ -126,34 +135,34 @@ function K(e) {
         },
         className: "w-full text-left px-3 py-2 hover:bg-white/5 transition-colors flex items-center gap-2"
       },
-      /* @__PURE__ */ e.h(I, null),
+      /* @__PURE__ */ e.h(K, null),
       /* @__PURE__ */ e.h("span", { className: "text-xs text-[var(--color-text-primary)]" }, "Remote Screen")
     );
   }
   function _() {
-    const { hosts: r, selectedId: o } = R(), [a, c] = C(!1), [l, u] = C(null), p = g(null), m = r.find((n) => n.id === o);
-    h(() => {
+    const { hosts: r, selectedId: o } = S(), [a, c] = C(!1), [l, f] = C(null), w = b(null), m = r.find((n) => n.id === o), v = (m == null ? void 0 : m.protocol) === "android";
+    x(() => {
       t.load();
     }, []);
-    const x = W(() => {
+    const k = W(() => {
       c((n) => {
-        var i;
+        var d;
         if (n) return !1;
-        const s = (i = p.current) == null ? void 0 : i.getBoundingClientRect();
-        return s && u({ top: s.bottom + 6, left: s.left }), !0;
+        const i = (d = w.current) == null ? void 0 : d.getBoundingClientRect();
+        return i && f({ top: i.bottom + 6, left: i.left }), !0;
       });
     }, []);
-    h(() => {
+    x(() => {
       if (!a) return;
-      const n = (s) => s.key === "Escape" && c(!1);
+      const n = (i) => i.key === "Escape" && c(!1);
       return window.addEventListener("keydown", n), () => window.removeEventListener("keydown", n);
     }, [a]);
-    const v = "p-1.5 rounded hover:bg-white/10 transition-colors", b = "w-4 h-4 text-[var(--color-text-muted)]";
+    const p = "p-1.5 rounded hover:bg-white/10 transition-colors", s = "w-4 h-4 text-[var(--color-text-muted)]";
     return /* @__PURE__ */ e.h(e.React.Fragment, null, /* @__PURE__ */ e.h(
       "button",
       {
-        ref: p,
-        onClick: x,
+        ref: w,
+        onClick: k,
         className: "flex items-center gap-1 text-[11px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded px-2 py-1 text-[var(--color-text-primary)] max-w-[200px] hover:border-[var(--color-accent)] transition-colors",
         title: "Switch host"
       },
@@ -192,7 +201,7 @@ function K(e) {
           "button",
           {
             onClick: () => {
-              c(!1), S();
+              c(!1), R();
             },
             className: "w-full text-left px-3 py-2 text-xs text-[var(--color-accent)] hover:bg-white/5 flex items-center gap-1.5"
           },
@@ -201,18 +210,30 @@ function K(e) {
         )
       )),
       document.body
-    ), /* @__PURE__ */ e.h("button", { onClick: () => o && t.connect(o), className: v, title: "Reconnect" }, /* @__PURE__ */ e.h("svg", { className: b, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("path", { d: "M21 12a9 9 0 1 1-3-6.7" }), /* @__PURE__ */ e.h("path", { d: "M21 3v6h-6" }))), /* @__PURE__ */ e.h(
+    ), /* @__PURE__ */ e.h("button", { onClick: () => o && t.connect(o), className: p, title: "Reconnect" }, /* @__PURE__ */ e.h("svg", { className: s, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("path", { d: "M21 12a9 9 0 1 1-3-6.7" }), /* @__PURE__ */ e.h("path", { d: "M21 3v6h-6" }))), /* @__PURE__ */ e.h(
       "button",
       {
         onClick: () => {
-          var n, s, i, d;
-          return (d = (i = (s = (n = t.iframe) == null ? void 0 : n.contentWindow) == null ? void 0 : s.UI) == null ? void 0 : i.toggleVirtualKeyboard) == null ? void 0 : d.call(i);
+          var n, i, d, u;
+          return (u = (d = (i = (n = t.iframe) == null ? void 0 : n.contentWindow) == null ? void 0 : i.UI) == null ? void 0 : d.toggleVirtualKeyboard) == null ? void 0 : u.call(d);
         },
-        className: v,
+        className: p,
         title: "Toggle keyboard"
       },
-      /* @__PURE__ */ e.h("svg", { className: b, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("rect", { x: "2", y: "6", width: "20", height: "12", rx: "2" }), /* @__PURE__ */ e.h("path", { d: "M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12" }))
-    ), /* @__PURE__ */ e.h(
+      /* @__PURE__ */ e.h("svg", { className: s, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("rect", { x: "2", y: "6", width: "20", height: "12", rx: "2" }), /* @__PURE__ */ e.h("path", { d: "M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12" }))
+    ), v && /* @__PURE__ */ e.h(e.React.Fragment, null, /* @__PURE__ */ e.h("span", { className: "w-px h-4 bg-[var(--color-border)] mx-0.5" }), /* @__PURE__ */ e.h("button", { onClick: () => t.sendKey("KEYCODE_BACK"), className: p, title: "Back" }, /* @__PURE__ */ e.h(
+      "svg",
+      {
+        className: s,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: "2",
+        strokeLinecap: "round",
+        strokeLinejoin: "round"
+      },
+      /* @__PURE__ */ e.h("polyline", { points: "15 18 9 12 15 6" })
+    )), /* @__PURE__ */ e.h("button", { onClick: () => t.sendKey("KEYCODE_HOME"), className: p, title: "Home" }, /* @__PURE__ */ e.h("svg", { className: s, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("circle", { cx: "12", cy: "12", r: "8" }))), /* @__PURE__ */ e.h("button", { onClick: () => t.sendKey("KEYCODE_APP_SWITCH"), className: p, title: "Recents" }, /* @__PURE__ */ e.h("svg", { className: s, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("rect", { x: "5", y: "5", width: "14", height: "14", rx: "1.5" }))), /* @__PURE__ */ e.h("span", { className: "w-px h-4 bg-[var(--color-border)] mx-0.5" })), /* @__PURE__ */ e.h(
       "button",
       {
         onClick: () => {
@@ -220,78 +241,78 @@ function K(e) {
           n && n !== "android" && window.open(n, `remote-screen-${o}`, "popup=1,width=1280,height=800");
         },
         disabled: !o,
-        className: `${v} disabled:opacity-30`,
+        className: `${p} disabled:opacity-30`,
         title: "Pop out"
       },
-      /* @__PURE__ */ e.h("svg", { className: b, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("path", { d: "M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" }), /* @__PURE__ */ e.h("polyline", { points: "15 3 21 3 21 9" }), /* @__PURE__ */ e.h("line", { x1: "10", y1: "14", x2: "21", y2: "3" }))
+      /* @__PURE__ */ e.h("svg", { className: s, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("path", { d: "M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" }), /* @__PURE__ */ e.h("polyline", { points: "15 3 21 3 21 9" }), /* @__PURE__ */ e.h("line", { x1: "10", y1: "14", x2: "21", y2: "3" }))
     ));
   }
-  function A() {
-    const { hosts: r, selectedId: o, src: a, srcKey: c, error: l } = R(), u = g(null), p = g(null), m = r.find((n) => n.id === o), x = (m == null ? void 0 : m.protocol) === "android";
-    h(() => {
+  function I() {
+    const { hosts: r, selectedId: o, src: a, srcKey: c, error: l } = S(), f = b(null), w = b(null), m = r.find((s) => s.id === o), v = (m == null ? void 0 : m.protocol) === "android";
+    x(() => {
       t.load();
-    }, []), h(() => {
-      t.iframe = u.current;
+    }, []), x(() => {
+      t.iframe = f.current;
     }, [c]);
-    const v = W(() => {
-      var f;
-      const n = (f = u.current) == null ? void 0 : f.contentWindow, s = t.creds;
-      if (t.iframe = u.current, !n || !s) return;
+    const k = W(() => {
+      var u;
+      const s = (u = f.current) == null ? void 0 : u.contentWindow, n = t.creds;
+      if (t.iframe = f.current, !s || !n) return;
       let i = 0;
       const d = () => {
-        var M;
-        const w = (M = n.UI) == null ? void 0 : M.rfb;
-        if (!w) {
+        var E;
+        const h = (E = s.UI) == null ? void 0 : E.rfb;
+        if (!h) {
           ++i < 40 && setTimeout(d, 100);
           return;
         }
-        w.addEventListener("credentialsrequired", () => {
-          w.sendCredentials({ username: s.username || "", password: s.password || "" });
+        h.addEventListener("credentialsrequired", () => {
+          h.sendCredentials({ username: n.username || "", password: n.password || "" });
         });
       };
       d();
     }, []);
-    h(() => {
-      if (!x || !o) return;
-      const n = new WebSocket(y.wsUrl(`/ws/android/${o}`));
-      n.binaryType = "blob", t.androidWs = n;
-      let s = !0;
-      return n.onmessage = async (i) => {
-        if (!s || !(i.data instanceof Blob)) return;
-        const d = await createImageBitmap(i.data), f = p.current;
-        f && (f.width = d.width, f.height = d.height, f.getContext("2d").drawImage(d, 0, 0), d.close());
-      }, n.onerror = () => t.set({ error: "Android stream failed" }), () => {
-        s = !1, t.androidWs = null, n.close();
+    x(() => {
+      if (!v || !o) return;
+      const s = new WebSocket(g.wsUrl(`/ws/android/${o}`));
+      s.binaryType = "blob", t.androidWs = s;
+      let n = !0;
+      return s.onmessage = async (i) => {
+        if (!n || !(i.data instanceof Blob)) return;
+        const d = await createImageBitmap(i.data), u = w.current;
+        u && (u.width = d.width, u.height = d.height, u.getContext("2d").drawImage(d, 0, 0), d.close());
+      }, s.onerror = () => t.set({ error: "Android stream failed" }), () => {
+        n = !1, t.androidWs = null, s.close();
       };
-    }, [x, o, c]);
-    const b = (n) => {
-      var w;
-      const s = p.current;
-      if (!s) return;
-      const i = s.getBoundingClientRect(), d = Math.round((n.clientX - i.left) * (s.width / i.width)), f = Math.round((n.clientY - i.top) * (s.height / i.height));
-      ((w = t.androidWs) == null ? void 0 : w.readyState) === WebSocket.OPEN && t.androidWs.send(JSON.stringify({ type: "tap", x: d, y: f }));
+    }, [v, o, c]);
+    const p = (s) => {
+      var h;
+      const n = w.current;
+      if (!n) return;
+      const i = n.getBoundingClientRect(), d = Math.round((s.clientX - i.left) * (n.width / i.width)), u = Math.round((s.clientY - i.top) * (n.height / i.height));
+      ((h = t.androidWs) == null ? void 0 : h.readyState) === WebSocket.OPEN && t.androidWs.send(JSON.stringify({ type: "tap", x: d, y: u }));
     };
-    return /* @__PURE__ */ e.h("div", { className: "flex flex-col h-full bg-black" }, /* @__PURE__ */ e.h("div", { className: "flex-1 relative" }, l ? /* @__PURE__ */ e.h("div", { className: "absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-red-300" }, l) : r.length ? x ? /* @__PURE__ */ e.h(
+    return /* @__PURE__ */ e.h("div", { className: "flex flex-col h-full bg-black" }, /* @__PURE__ */ e.h("div", { className: "flex-1 relative" }, l ? /* @__PURE__ */ e.h("div", { className: "absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-red-300" }, l) : r.length ? v ? /* @__PURE__ */ e.h(
       "canvas",
       {
-        ref: p,
-        onClick: b,
+        ref: w,
+        onClick: p,
         className: "absolute inset-0 w-full h-full object-contain"
       }
     ) : /* @__PURE__ */ e.h(
       "iframe",
       {
-        ref: u,
+        ref: f,
         key: c,
         src: a,
-        onLoad: v,
+        onLoad: k,
         className: "absolute inset-0 w-full h-full border-0",
         title: "Remote Screen"
       }
-    ) : /* @__PURE__ */ e.h("div", { className: "absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]" }, /* @__PURE__ */ e.h("span", null, "No hosts yet."), /* @__PURE__ */ e.h("button", { onClick: S, className: "text-[var(--color-accent)] hover:underline" }, "Add one in Settings"))));
+    ) : /* @__PURE__ */ e.h("div", { className: "absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]" }, /* @__PURE__ */ e.h("span", null, "No hosts yet."), /* @__PURE__ */ e.h("button", { onClick: R, className: "text-[var(--color-accent)] hover:underline" }, "Add one in Settings"))));
   }
-  e.registerSlot("core.nav.workspace", B), e.registerWindow(N, A), e.registerWindowActions(N, _);
+  e.registerSlot("core.nav.workspace", $), e.registerWindow(N, I), e.registerWindowActions(N, _);
 }
 export {
-  K as register
+  O as register
 };

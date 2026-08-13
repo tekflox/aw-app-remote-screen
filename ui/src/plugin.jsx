@@ -97,6 +97,16 @@ export function register(host) {
       store.connect(id);
     },
 
+    // Android's three system buttons. They are not part of the mirrored
+    // framebuffer — screencap captures the app surface, while Back/Home/
+    // Recents are the OS navigation bar, so without these the device is
+    // effectively view-only past the first screen. `adb shell input keyevent`
+    // is the same channel taps already use.
+    sendKey(code) {
+      const ws = store.androidWs;
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', code }));
+    },
+
     async connect(id) {
       const row = store.state.hosts.find((h) => h.id === id);
       if (!row) return;
@@ -181,6 +191,7 @@ export function register(host) {
     const [anchor, setAnchor] = useState(null);
     const btnRef = useRef(null);
     const selected = hosts.find((h) => h.id === selectedId);
+    const isAndroid = selected?.protocol === 'android';
 
     useEffect(() => { store.load(); }, []);
 
@@ -258,6 +269,29 @@ export function register(host) {
             <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12" />
           </svg>
         </button>
+
+        {isAndroid && (
+          <>
+            <span className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
+            <button onClick={() => store.sendKey('KEYCODE_BACK')} className={btn} title="Back">
+              <svg className={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <button onClick={() => store.sendKey('KEYCODE_HOME')} className={btn} title="Home">
+              <svg className={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="8" />
+              </svg>
+            </button>
+            <button onClick={() => store.sendKey('KEYCODE_APP_SWITCH')} className={btn} title="Recents">
+              <svg className={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="5" y="5" width="14" height="14" rx="1.5" />
+              </svg>
+            </button>
+            <span className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
+          </>
+        )}
 
         <button
           onClick={() => {

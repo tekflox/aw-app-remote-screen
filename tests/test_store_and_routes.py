@@ -260,3 +260,18 @@ def test_activate_never_reads_the_table():
     activate = "\n".join(ln.split("#")[0] for ln in activate.splitlines())
     for forbidden in ("store.list(", "store.get(", "store.credentials("):
         assert forbidden not in activate, f"activate() must not call {forbidden}"
+
+
+@pytest.mark.parametrize("code,expected", [
+    ("KEYCODE_BACK", "keyevent KEYCODE_BACK"),
+    ("KEYCODE_HOME", "keyevent KEYCODE_HOME"),
+    ("KEYCODE_APP_SWITCH", "keyevent KEYCODE_APP_SWITCH"),
+])
+def test_android_navigation_keys_build(code, expected):
+    """Back/Home/Recents are the OS navigation bar, NOT part of the mirrored
+    surface screencap captures — without them the device is view-only past the
+    first screen."""
+    from remote_screen_app.android import build_input_command
+    cmd = build_input_command({"device_serial": "s", "adb_bin": "adb"},
+                              {"type": "key", "code": code})
+    assert cmd.endswith(expected)
