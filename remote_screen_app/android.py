@@ -246,7 +246,16 @@ async def stream(ws: WebSocket, row: dict) -> None:
 
         async def recv_controls() -> None:
             while True:
-                msg = await ws.receive_text()
+                # receive_text() raises on a binary frame or a closing socket;
+                # letting that escape would end the session (see the gather
+                # below), so a bad control frame must never be fatal.
+                try:
+                    msg = await ws.receive_text()
+                except WebSocketDisconnect:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("android %s: bad control frame: %s", row["name"], exc)
+                    return
                 try:
                     data = json.loads(msg)
                 except json.JSONDecodeError:
@@ -258,9 +267,15 @@ async def stream(ws: WebSocket, row: dict) -> None:
                     except Exception as exc:  # noqa: BLE001
                         log.warning("android %s: control failed: %s", row["name"], exc)
 
-        try:
-            await asyncio.gather(send_frames(), recv_controls())
-        except WebSocketDisconnect:
-            pass  # viewer closed the connection
-        except Exception as exc:  # noqa: BLE001
-            log.warning("android %s: session ended: %s", row["name"], exc)
+        # return_exceptions=True is load-bearing: without it, ONE raise on the
+        # control side (a stray binary frame, a socket hiccup while an exec is
+        # in flight) propagates out of gather and takes the FRAME LOOP down
+        # with it. The viewer keeps showing the last painted frame and looks
+        # live while the device has moved on — the worst possible failure for a
+        # mirror. Found live 2026-08-13: pressing Home froze the picture while
+        # `dumpsys` confirmed the device had actually gone to the launcher.
+        results = await asyncio.gather(send_frames(), recv_controls(),
+                                       return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception) and not isinstance(result, WebSocketDisconnect):
+                log.warning("android %s: %s", row["name"], result)

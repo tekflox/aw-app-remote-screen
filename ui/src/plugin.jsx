@@ -345,23 +345,49 @@ export function register(host) {
     // Android has no VNC server: frames arrive as binary PNGs on the app's own
     // WebSocket and taps go back as JSON. Painting into a canvas (rather than
     // an <img> per frame) avoids churning a blob URL 2x a second.
+    // The monolith's AndroidViewerPanel reconnected on close; dropping that in
+    // the port meant a single dead socket froze the picture on its last frame
+    // — the mirror still LOOKED live while the device had moved on. A stale
+    // mirror is worse than a visibly broken one, so reconnect, and surface it
+    // when we cannot.
     useEffect(() => {
       if (!isAndroid || !selectedId) return undefined;
-      const ws = new WebSocket(api.wsUrl(`/ws/android/${selectedId}`));
-      ws.binaryType = 'blob';
-      store.androidWs = ws;   // the tap handler sends back on this same socket
       let alive = true;
-      ws.onmessage = async (ev) => {
-        if (!alive || !(ev.data instanceof Blob)) return;
-        const bmp = await createImageBitmap(ev.data);
-        const c = canvasRef.current;
-        if (!c) return;
-        c.width = bmp.width; c.height = bmp.height;
-        c.getContext('2d').drawImage(bmp, 0, 0);
-        bmp.close();
+      let ws = null;
+      let timer = null;
+      let attempt = 0;
+
+      const connect = () => {
+        if (!alive) return;
+        ws = new WebSocket(api.wsUrl(`/ws/android/${selectedId}`));
+        ws.binaryType = 'blob';
+        store.androidWs = ws;   // the tap/key handlers send back on this socket
+        ws.onopen = () => { attempt = 0; store.set({ error: null }); };
+        ws.onmessage = async (ev) => {
+          if (!alive || !(ev.data instanceof Blob)) return;
+          const bmp = await createImageBitmap(ev.data);
+          const c = canvasRef.current;
+          if (!c) { bmp.close(); return; }
+          c.width = bmp.width; c.height = bmp.height;
+          c.getContext('2d').drawImage(bmp, 0, 0);
+          bmp.close();
+        };
+        ws.onclose = () => {
+          if (!alive) return;
+          store.androidWs = null;
+          attempt += 1;
+          if (attempt > 6) { store.set({ error: 'Android stream lost — press Reconnect.' }); return; }
+          timer = setTimeout(connect, Math.min(1000 * attempt, 5000));
+        };
       };
-      ws.onerror = () => store.set({ error: 'Android stream failed' });
-      return () => { alive = false; store.androidWs = null; ws.close(); };
+      connect();
+
+      return () => {
+        alive = false;
+        clearTimeout(timer);
+        store.androidWs = null;
+        try { ws && ws.close(); } catch (_e) { /* already gone */ }
+      };
     }, [isAndroid, selectedId, srcKey]);
 
     const tap = (e) => {
