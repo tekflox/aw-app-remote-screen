@@ -171,6 +171,12 @@ export function register(host) {
 
   const openSettings = () => window.__awOpenAppWindow?.('remote-screen.hosts');
 
+  // Bottom-bar navigation: 32px icons (double the title bar's 16px) with a
+  // generous hit area — these are the device's primary controls, tapped far
+  // more than any viewer chrome, and often on a touchscreen.
+  const navBtn = 'p-2 rounded-lg hover:bg-white/10 active:bg-white/20 transition-colors';
+  const navIcon = 'w-8 h-8 text-[var(--color-text-primary)]';
+
   // ── 1. Workspace nav row ────────────────────────────────────────────────
   function RemoteScreenNavRow() {
     return (
@@ -191,7 +197,6 @@ export function register(host) {
     const [anchor, setAnchor] = useState(null);
     const btnRef = useRef(null);
     const selected = hosts.find((h) => h.id === selectedId);
-    const isAndroid = selected?.protocol === 'android';
 
     useEffect(() => { store.load(); }, []);
 
@@ -270,28 +275,6 @@ export function register(host) {
           </svg>
         </button>
 
-        {isAndroid && (
-          <>
-            <span className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
-            <button onClick={() => store.sendKey('KEYCODE_BACK')} className={btn} title="Back">
-              <svg className={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-            </button>
-            <button onClick={() => store.sendKey('KEYCODE_HOME')} className={btn} title="Home">
-              <svg className={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="8" />
-              </svg>
-            </button>
-            <button onClick={() => store.sendKey('KEYCODE_APP_SWITCH')} className={btn} title="Recents">
-              <svg className={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="5" y="5" width="14" height="14" rx="1.5" />
-              </svg>
-            </button>
-            <span className="w-px h-4 bg-[var(--color-border)] mx-0.5" />
-          </>
-        )}
 
         <button
           onClick={() => {
@@ -421,6 +404,33 @@ export function register(host) {
               className="absolute inset-0 w-full h-full border-0" title="Remote Screen" />
           )}
         </div>
+
+        {/* Android's navigation bar, where the device puts its own: along the
+            bottom, centred. It started life in the window title bar next to
+            Reconnect/Keyboard, which put system navigation in amongst viewer
+            chrome and made three 16px icons easy to miss. Same keyevents,
+            just where the hand already reaches for them. */}
+        {isAndroid && hosts.length > 0 && (
+          <div className="shrink-0 flex items-center justify-center gap-10 py-2.5
+                          bg-[var(--color-bg-header)] border-t border-[var(--color-border)]">
+            <button onClick={() => store.sendKey('KEYCODE_BACK')} className={navBtn} title="Back">
+              <svg className={navIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <button onClick={() => store.sendKey('KEYCODE_HOME')} className={navBtn} title="Home">
+              <svg className={navIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="8" />
+              </svg>
+            </button>
+            <button onClick={() => store.sendKey('KEYCODE_APP_SWITCH')} className={navBtn} title="Recents">
+              <svg className={navIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="5" y="5" width="14" height="14" rx="1.5" />
+              </svg>
+            </button>
+          </div>
+        )}
       </div>
     );
   }
