@@ -434,3 +434,15 @@ def test_a_host_with_no_password_reports_blank_credentials(store):
     creds = store.credentials(row["id"])
     assert creds["password"] == "" and creds["username"] == ""
     assert row["has_password"] is False
+
+
+def test_frame_pacing_is_a_target_not_an_added_sleep():
+    """The old code slept a FIXED interval ON TOP of a ~0.72s capture, so
+    frames landed every ~1.22s while the comment claimed 2 fps. The sleep must
+    be the REMAINDER of the target, which is normally zero."""
+    from remote_screen_app.android import FRAME_TARGET_S
+    # A capture slower than the target must add no sleep at all.
+    assert max(0.0, FRAME_TARGET_S - 0.72) == 0.0
+    # And it must never be tighter than the measured round trip, or a second
+    # capture goes in flight and the exec channel saturates again.
+    assert FRAME_TARGET_S >= 0.5

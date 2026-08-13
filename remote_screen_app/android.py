@@ -24,6 +24,7 @@ import base64
 import json
 import logging
 import shlex
+import time
 
 import os
 from pathlib import Path
@@ -33,7 +34,21 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 log = logging.getLogger("aw_apps.remote-screen.android")
 
-FRAME_INTERVAL_S = 0.5  # ~2 fps
+# TARGET interval between frames, not a sleep. Measured 2026-08-13 against the
+# emulator on macbook-fred:
+#
+#   screencap -p on device   0.53s   (PNG encode; raw is 0.38s but 8.3 MB)
+#   sips downscale           0.03s
+#   exec round trip          0.20s   (start+wait via aw-backend -> /link)
+#   ------------------------------
+#   one capture              0.72s
+#
+# The old code slept a FIXED 0.5s on top of that 0.72s, so frames landed every
+# ~1.22s — 0.8 fps, while the comment claimed 2. Pacing to a target instead
+# means the sleep is whatever is LEFT of the interval, usually zero, and the
+# capture itself becomes the limit. Do not push this below the round trip: a
+# second capture in flight is how the exec channel got saturated before.
+FRAME_TARGET_S = 0.7
 
 # The exec channel truncates stdout at 1 MiB. A full-resolution PNG of a busy
 # Android screen base64s to ~1.7 MB, so the frame arrived CUT — a partial PNG,
@@ -273,10 +288,12 @@ class _Capture:
         self.subscribers: set[WebSocket] = set()
         self.task: asyncio.Task | None = None
         self.warned_truncated = False
+        self.last_frame_s: float | None = None
 
     async def _run(self) -> None:
         async with httpx.AsyncClient() as client:
             while self.subscribers:
+                started = time.monotonic()
                 try:
                     lines = await exec_ndjson(
                         client, self.row, capture_command(self.row), timeout=30)
@@ -303,7 +320,12 @@ class _Capture:
                     raise
                 except Exception as exc:  # noqa: BLE001 — one bad poll is not fatal
                     log.warning("android %s: capture error: %s", self.row["name"], exc)
-                await asyncio.sleep(FRAME_INTERVAL_S)
+                elapsed = time.monotonic() - started
+                self.last_frame_s = elapsed
+                # Sleep only the remainder. When a capture already took longer
+                # than the target — the normal case — this is 0 and the next
+                # one starts immediately.
+                await asyncio.sleep(max(0.0, FRAME_TARGET_S - elapsed))
         log.info("android %s: no viewers left, capture stopped", self.row["name"])
 
     async def _fan_out(self, png: bytes) -> None:
@@ -340,7 +362,7 @@ def _unsubscribe(cap: _Capture, ws: WebSocket) -> None:
     if cap.subscribers:
         return
     # Last viewer out cancels the loop rather than letting it notice on its
-    # next poll — that would be up to FRAME_INTERVAL_S + a full exec round
+    # next poll — that would be up to FRAME_TARGET_S + a full exec round
     # trip of pointless traffic on the tunnel.
     if cap.task is not None:
         cap.task.cancel()
