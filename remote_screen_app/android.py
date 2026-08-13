@@ -23,6 +23,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import shlex
 import time
 
@@ -180,19 +181,66 @@ def collect(lines: list[dict]) -> tuple[str, str, int]:
     return "".join(out_chunks), "".join(err_chunks), code
 
 
-def build_input_command(row: dict, data: dict) -> str | None:
+_SIZE_CACHE: dict[str, tuple[int, int]] = {}
+
+
+async def device_size(client: httpx.AsyncClient, row: dict) -> tuple[int, int] | None:
+    """The device's real pixel resolution, cached per host+serial.
+
+    Input coordinates arrive NORMALISED (0..1 of the mirrored image) because
+    the client cannot know this number: the frame it draws has been downscaled
+    to FRAME_MAX_PX on the capture host, so its canvas is 506x900 for a
+    1080x1920 phone. Sending canvas pixels straight to `input tap` put every
+    touch at roughly half its intended offset."""
+    key = f"{row.get('host')}::{row.get('device_serial')}"
+    if key in _SIZE_CACHE:
+        return _SIZE_CACHE[key]
+    try:
+        out, _, _ = collect(await exec_ndjson(client, row, f"{adb(row)} shell wm size", timeout=15))
+    except Exception:  # noqa: BLE001 — no size just means we cannot map yet
+        return None
+    m = re.search(r"(\d+)x(\d+)", out or "")
+    if not m:
+        return None
+    size = (int(m.group(1)), int(m.group(2)))
+    _SIZE_CACHE[key] = size
+    return size
+
+
+def _denormalise(data: dict, keys: tuple[str, str], size: tuple[int, int]) -> tuple[int, int] | None:
+    """Map a normalised (0..1) point onto device pixels, or None if absent."""
+    nx, ny = data.get(keys[0]), data.get(keys[1])
+    if not isinstance(nx, (int, float)) or not isinstance(ny, (int, float)):
+        return None
+    # Clamp rather than reject: a touch a hair outside the image from a
+    # rounding error should land on the edge, not vanish.
+    nx = min(max(float(nx), 0.0), 1.0)
+    ny = min(max(float(ny), 0.0), 1.0)
+    return round(nx * (size[0] - 1)), round(ny * (size[1] - 1))
+
+
+def build_input_command(row: dict, data: dict, size: tuple[int, int] | None = None) -> str | None:
     """Translate one control message into an ``adb shell input`` command, or
     None if it is malformed. Returning None (rather than raising) keeps a
     garbage frame from tearing down a live mirror session."""
     msg_type = data.get("type")
     prefix = f"{adb(row)} shell input"
     if msg_type == "tap":
+        if size and (pt := _denormalise(data, ("nx", "ny"), size)):
+            return f"{prefix} tap {pt[0]} {pt[1]}"
         try:
             x, y = int(data["x"]), int(data["y"])
         except (KeyError, TypeError, ValueError):
             return None
         return f"{prefix} tap {x} {y}"
     if msg_type == "swipe":
+        if size:
+            a = _denormalise(data, ("nx1", "ny1"), size)
+            b = _denormalise(data, ("nx2", "ny2"), size)
+            if a and b:
+                d = data.get("duration_ms")
+                tail = f" {int(d)}" if isinstance(d, (int, float)) else ""
+                return f"{prefix} swipe {a[0]} {a[1]} {b[0]} {b[1]}{tail}"
         try:
             x1, y1 = int(data["x1"]), int(data["y1"])
             x2, y2 = int(data["x2"]), int(data["y2"])
@@ -393,7 +441,8 @@ async def stream(ws: WebSocket, row: dict) -> None:
                     data = json.loads(msg)
                 except json.JSONDecodeError:
                     continue
-                command = build_input_command(row, data)
+                size = await device_size(client, row)
+                command = build_input_command(row, data, size)
                 if command:
                     try:
                         await exec_ndjson(client, row, command, timeout=15)

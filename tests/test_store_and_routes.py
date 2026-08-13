@@ -446,3 +446,36 @@ def test_frame_pacing_is_a_target_not_an_added_sleep():
     # And it must never be tighter than the measured round trip, or a second
     # capture goes in flight and the exec channel saturates again.
     assert FRAME_TARGET_S >= 0.5
+
+
+def test_normalised_tap_maps_to_real_device_pixels():
+    """The canvas is the DOWNSCALED frame (506x900 for a 1080x1920 phone), so
+    canvas pixels sent straight to `input tap` landed at roughly half the
+    intended offset. Normalised coords must resolve against the device."""
+    from remote_screen_app.android import build_input_command
+    row = {"device_serial": "emulator-5554", "adb_bin": "adb"}
+    cmd = build_input_command(row, {"type": "tap", "nx": 0.5, "ny": 0.5}, size=(1080, 1920))
+    assert cmd.endswith("input tap 540 960")
+    # The far corner must reach the far corner, not 47% of the way there.
+    cmd = build_input_command(row, {"type": "tap", "nx": 1.0, "ny": 1.0}, size=(1080, 1920))
+    assert cmd.endswith("input tap 1079 1919")
+
+
+def test_normalised_swipe_is_reachable():
+    """Nothing ever sent a swipe, so the backend branch was dead code and the
+    device could not be scrolled."""
+    from remote_screen_app.android import build_input_command
+    row = {"device_serial": "emulator-5554", "adb_bin": "adb"}
+    cmd = build_input_command(
+        row,
+        {"type": "swipe", "nx1": 0.5, "ny1": 0.8, "nx2": 0.5, "ny2": 0.2, "duration_ms": 300},
+        size=(1080, 1920),
+    )
+    assert cmd.endswith("input swipe 540 1535 540 384 300")
+
+
+def test_pixel_coords_still_work_without_a_known_size():
+    """If `wm size` fails we must not silently stop accepting input."""
+    from remote_screen_app.android import build_input_command
+    row = {"device_serial": "emulator-5554", "adb_bin": "adb"}
+    assert build_input_command(row, {"type": "tap", "x": 10, "y": 20}, size=None).endswith("tap 10 20")

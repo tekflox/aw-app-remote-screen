@@ -388,16 +388,58 @@ export function register(host) {
       };
     }, [isAndroid, selectedId, srcKey]);
 
-    const tap = (e) => {
+    // `object-contain` letterboxes the frame INSIDE the element box, but
+    // getBoundingClientRect() reports the box. Mapping through the box put a
+    // click at the image's left edge at 36% of the device width, and the whole
+    // 1080px range collapsed into 122px. Map through the rendered rect.
+    const toNormalised = (e) => {
       const c = canvasRef.current;
-      if (!c) return;
+      if (!c || !c.width || !c.height) return null;
       const r = c.getBoundingClientRect();
-      // Map CSS-rendered coords to the device's natural pixels, so a tap lands
-      // correctly no matter how the canvas is scaled.
-      const x = Math.round((e.clientX - r.left) * (c.width / r.width));
-      const y = Math.round((e.clientY - r.top) * (c.height / r.height));
-      if (store.androidWs?.readyState === WebSocket.OPEN) {
-        store.androidWs.send(JSON.stringify({ type: 'tap', x, y }));
+      const imgA = c.width / c.height;
+      const boxA = r.width / r.height;
+      const w = imgA > boxA ? r.width : r.height * imgA;
+      const h = imgA > boxA ? r.width / imgA : r.height;
+      const nx = (e.clientX - (r.left + (r.width - w) / 2)) / w;
+      const ny = (e.clientY - (r.top + (r.height - h) / 2)) / h;
+      // A click on the black bars is not a device coordinate. Dropping it
+      // beats sending a clamped edge touch the user never aimed at.
+      if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null;
+      return { nx, ny };
+    };
+
+    const send = (msg) => {
+      const ws = store.androidWs;
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    };
+
+    // Press/release rather than onClick, so a drag becomes a swipe. Without
+    // this the backend's swipe branch was unreachable — nothing ever sent one,
+    // leaving the device unscrollable.
+    const DRAG_MIN = 0.02;   // fraction of the screen before it counts as a drag
+    const downRef = useRef(null);
+
+    const onDown = (e) => {
+      const p = toNormalised(e);
+      downRef.current = p ? { ...p, t: Date.now() } : null;
+    };
+
+    const onUp = (e) => {
+      const from = downRef.current;
+      downRef.current = null;
+      const to = toNormalised(e);
+      if (!from || !to) return;
+      const dist = Math.hypot(to.nx - from.nx, to.ny - from.ny);
+      if (dist < DRAG_MIN) {
+        send({ type: 'tap', nx: to.nx, ny: to.ny });
+      } else {
+        send({
+          type: 'swipe',
+          nx1: from.nx, ny1: from.ny, nx2: to.nx, ny2: to.ny,
+          // Match the real gesture duration: a flick and a slow drag scroll
+          // very differently on Android.
+          duration_ms: Math.min(Math.max(Date.now() - from.t, 50), 2000),
+        });
       }
     };
 
@@ -412,8 +454,10 @@ export function register(host) {
               <button onClick={openSettings} className="text-[var(--color-accent)] hover:underline">Add one in Settings</button>
             </div>
           ) : isAndroid ? (
-            <canvas ref={canvasRef} onClick={tap}
-              className="absolute inset-0 w-full h-full object-contain" />
+            <canvas ref={canvasRef}
+              onPointerDown={onDown} onPointerUp={onUp}
+              onPointerLeave={() => { downRef.current = null; }}
+              className="absolute inset-0 w-full h-full object-contain touch-none" />
           ) : (
             <iframe ref={iframeRef} key={srcKey} src={src} onLoad={injectCredentials}
               className="absolute inset-0 w-full h-full border-0" title="Remote Screen" />
