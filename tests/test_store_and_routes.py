@@ -424,3 +424,13 @@ def test_viewer_page_escapes_a_hostile_name():
     assert "<script>alert(1)</script>" not in html
     assert '&lt;/title&gt;' in html
     assert '"a\\"b"' in html, "the id must be JSON-encoded into the JS literal"
+
+
+def test_a_host_with_no_password_reports_blank_credentials(store):
+    """The viewer must be able to tell "nothing saved" from "saved and empty":
+    auto-answering the server's credential request with blanks gets the
+    session REJECTED, where doing nothing lets noVNC prompt the user."""
+    row = store.create({"name": "mac", "host": "127.0.0.1", "port": 15900})
+    creds = store.credentials(row["id"])
+    assert creds["password"] == "" and creds["username"] == ""
+    assert row["has_password"] is False

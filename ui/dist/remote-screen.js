@@ -246,7 +246,7 @@ function j(e) {
     const b = M(() => {
       var h;
       const n = (h = u.current) == null ? void 0 : h.contentWindow, s = t.creds;
-      if (t.iframe = u.current, !n || !s) return;
+      if (t.iframe = u.current, !n || !s || !s.password && !s.username) return;
       let i = 0;
       const d = () => {
         var m;

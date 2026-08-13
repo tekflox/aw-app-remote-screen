@@ -323,6 +323,12 @@ export function register(host) {
       const creds = store.creds;
       store.iframe = iframeRef.current;
       if (!win || !creds) return;
+      // Only answer when we actually HAVE something. Auto-sending blanks made
+      // the server reject the session outright ("Authentication or
+      // authorization failure") instead of letting noVNC show its own prompt —
+      // so a host with no saved password became unusable rather than merely
+      // un-remembered.
+      if (!creds.password && !creds.username) return;
       let tries = 0;
       const attach = () => {
         const rfb = win.UI?.rfb;
