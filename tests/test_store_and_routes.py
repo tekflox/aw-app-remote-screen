@@ -275,3 +275,86 @@ def test_android_navigation_keys_build(code, expected):
     cmd = build_input_command({"device_serial": "s", "adb_bin": "adb"},
                               {"type": "key", "code": code})
     assert cmd.endswith(expected)
+
+
+# ── shared android capture ──────────────────────────────────────────────────
+
+class _FakeWS:
+    """Enough WebSocket for the capture fan-out: it records frames and can be
+    made to fail, which is how a closed viewer is detected."""
+
+    def __init__(self, fail=False):
+        self.frames = []
+        self.fail = fail
+
+    async def send_bytes(self, data):
+        if self.fail:
+            raise RuntimeError("socket closed")
+        self.frames.append(data)
+
+
+@pytest.mark.asyncio
+async def test_one_capture_loop_is_shared_by_all_viewers():
+    """N viewers of the same device must cost ONE screencap stream. Per-viewer
+    loops congested the /link channel badly enough that a plain `echo` on the
+    host timed out."""
+    from remote_screen_app import android
+    android._captures.clear()
+    row = {"id": "h1", "name": "pixel"}
+    a, b, c = _FakeWS(), _FakeWS(), _FakeWS()
+    cap_a = android._subscribe(row, a)
+    cap_b = android._subscribe(row, b)
+    android._subscribe(row, c)
+    try:
+        assert cap_a is cap_b
+        assert android.capture_count() == 1
+        assert len(cap_a.subscribers) == 3
+    finally:
+        for ws, cap in ((a, cap_a), (b, cap_a), (c, cap_a)):
+            android._unsubscribe(cap, ws)
+
+
+@pytest.mark.asyncio
+async def test_last_viewer_out_stops_the_capture():
+    from remote_screen_app import android
+    android._captures.clear()
+    row = {"id": "h1", "name": "pixel"}
+    a, b = _FakeWS(), _FakeWS()
+    cap = android._subscribe(row, a)
+    android._subscribe(row, b)
+    android._unsubscribe(cap, a)
+    assert android.capture_count() == 1, "one viewer left, capture must stay"
+    android._unsubscribe(cap, b)
+    assert android.capture_count() == 0, "no viewers, capture must stop"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_send_unsubscribes_that_viewer_only():
+    """THE leak: a closed viewer's send used to be logged as 'bad frame' and
+    the loop carried on forever. Eight of those piled up on one device."""
+    from remote_screen_app import android
+    android._captures.clear()
+    row = {"id": "h1", "name": "pixel"}
+    good, dead = _FakeWS(), _FakeWS(fail=True)
+    cap = android._subscribe(row, good)
+    android._subscribe(row, dead)
+    try:
+        await cap._fan_out(b"PNGDATA")
+        assert dead not in cap.subscribers, "a failed send must drop that viewer"
+        assert good in cap.subscribers, "one dead viewer must not drop the others"
+        assert good.frames == [b"PNGDATA"]
+    finally:
+        android._unsubscribe(cap, good)
+
+
+@pytest.mark.asyncio
+async def test_capture_stops_when_every_viewer_dies_mid_frame():
+    from remote_screen_app import android
+    android._captures.clear()
+    row = {"id": "h1", "name": "pixel"}
+    dead = _FakeWS(fail=True)
+    cap = android._subscribe(row, dead)
+    await cap._fan_out(b"X")
+    assert cap.subscribers == set(), "the loop's own guard is an empty subscriber set"
+    android._unsubscribe(cap, dead)
+    assert android.capture_count() == 0

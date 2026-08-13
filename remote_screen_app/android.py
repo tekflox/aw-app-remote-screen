@@ -214,46 +214,108 @@ async def status(row: dict) -> dict:
         }
 
 
-async def stream(ws: WebSocket, row: dict) -> None:
-    """Frame loop + input control for one viewer session."""
-    await ws.accept()
-    async with httpx.AsyncClient() as client:
+class _Capture:
+    """ONE screencap loop per host, fanned out to every viewer watching it.
 
-        async def send_frames() -> None:
-            while True:
+    Before this, each viewer ran its own loop. That is not just wasteful, it
+    does not scale at all: every frame costs a start+wait pair through
+    aw-backend and the /link tunnel, so N viewers meant N times the traffic on
+    a channel that is already the slowest link in the chain. Eight stacked
+    loops were enough to congest it to the point where a plain `echo` on the
+    host timed out (observed 2026-08-13).
+
+    Now the cost is fixed at one capture stream per DEVICE no matter how many
+    tabs are open, and the loop stops the moment the last viewer leaves.
+    """
+
+    def __init__(self, row: dict) -> None:
+        self.row = row
+        self.subscribers: set[WebSocket] = set()
+        self.task: asyncio.Task | None = None
+
+    async def _run(self) -> None:
+        async with httpx.AsyncClient() as client:
+            while self.subscribers:
                 try:
                     lines = await exec_ndjson(
-                        client, row,
-                        f"{adb(row)} exec-out screencap -p | base64",
+                        client, self.row,
+                        f"{adb(self.row)} exec-out screencap -p | base64",
                         timeout=30,
                     )
                     out, err, code = collect(lines)
                     if code:
                         log.warning("android %s: screencap failed (exit %s): %s",
-                                    row["name"], code, err or out)
+                                    self.row["name"], code, err or out)
                     else:
                         b64_text = "".join(out.split())
                         if b64_text:
-                            try:
-                                await ws.send_bytes(base64.b64decode(b64_text))
-                            except Exception as exc:  # noqa: BLE001
-                                log.warning("android %s: bad frame: %s", row["name"], exc)
-                except (WebSocketDisconnect, RuntimeError):
+                            await self._fan_out(base64.b64decode(b64_text))
+                except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 — one bad poll is not fatal
-                    log.warning("android %s: capture error: %s", row["name"], exc)
+                    log.warning("android %s: capture error: %s", self.row["name"], exc)
                 await asyncio.sleep(FRAME_INTERVAL_S)
+        log.info("android %s: no viewers left, capture stopped", self.row["name"])
 
-        async def recv_controls() -> None:
+    async def _fan_out(self, png: bytes) -> None:
+        """Send one frame to every viewer, dropping the ones that have gone.
+
+        A failed send means that viewer's socket is closed. The previous code
+        logged it as "bad frame" and carried on — which is exactly how a closed
+        viewer left an immortal capture loop behind, and how eight of them
+        piled up. A send failure is now what UNSUBSCRIBES a viewer.
+        """
+        for ws in list(self.subscribers):
+            try:
+                await ws.send_bytes(png)
+            except Exception:  # noqa: BLE001 — this viewer is gone, others are not
+                self.subscribers.discard(ws)
+
+
+_captures: dict[str, _Capture] = {}
+
+
+def _subscribe(row: dict, ws: WebSocket) -> _Capture:
+    cap = _captures.get(row["id"])
+    if cap is None:
+        cap = _Capture(row)
+        _captures[row["id"]] = cap
+    cap.subscribers.add(ws)
+    if cap.task is None or cap.task.done():
+        cap.task = asyncio.create_task(cap._run())
+    return cap
+
+
+def _unsubscribe(cap: _Capture, ws: WebSocket) -> None:
+    cap.subscribers.discard(ws)
+    if cap.subscribers:
+        return
+    # Last viewer out cancels the loop rather than letting it notice on its
+    # next poll — that would be up to FRAME_INTERVAL_S + a full exec round
+    # trip of pointless traffic on the tunnel.
+    if cap.task is not None:
+        cap.task.cancel()
+        cap.task = None
+    _captures.pop(cap.row["id"], None)
+
+
+def capture_count() -> int:
+    """Live capture loops — one per device with at least one viewer."""
+    return len(_captures)
+
+
+async def stream(ws: WebSocket, row: dict) -> None:
+    """One viewer: subscribe to the host's shared capture, handle its input."""
+    await ws.accept()
+    cap = _subscribe(row, ws)
+    try:
+        async with httpx.AsyncClient() as client:
             while True:
-                # receive_text() raises on a binary frame or a closing socket;
-                # letting that escape would end the session (see the gather
-                # below), so a bad control frame must never be fatal.
                 try:
                     msg = await ws.receive_text()
                 except WebSocketDisconnect:
-                    raise
-                except Exception as exc:  # noqa: BLE001
+                    return
+                except Exception as exc:  # noqa: BLE001 — a stray binary frame
                     log.warning("android %s: bad control frame: %s", row["name"], exc)
                     return
                 try:
@@ -266,16 +328,7 @@ async def stream(ws: WebSocket, row: dict) -> None:
                         await exec_ndjson(client, row, command, timeout=15)
                     except Exception as exc:  # noqa: BLE001
                         log.warning("android %s: control failed: %s", row["name"], exc)
-
-        # return_exceptions=True is load-bearing: without it, ONE raise on the
-        # control side (a stray binary frame, a socket hiccup while an exec is
-        # in flight) propagates out of gather and takes the FRAME LOOP down
-        # with it. The viewer keeps showing the last painted frame and looks
-        # live while the device has moved on — the worst possible failure for a
-        # mirror. Found live 2026-08-13: pressing Home froze the picture while
-        # `dumpsys` confirmed the device had actually gone to the launcher.
-        results = await asyncio.gather(send_frames(), recv_controls(),
-                                       return_exceptions=True)
-        for result in results:
-            if isinstance(result, Exception) and not isinstance(result, WebSocketDisconnect):
-                log.warning("android %s: %s", row["name"], result)
+    finally:
+        # Runs on every exit path, including a cancelled task — without it the
+        # subscriber set keeps a dead socket and the capture never stops.
+        _unsubscribe(cap, ws)
