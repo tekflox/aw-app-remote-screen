@@ -34,6 +34,20 @@ from fastapi import WebSocket, WebSocketDisconnect
 log = logging.getLogger("aw_apps.remote-screen.android")
 
 FRAME_INTERVAL_S = 0.5  # ~2 fps
+
+# The exec channel truncates stdout at 1 MiB. A full-resolution PNG of a busy
+# Android screen base64s to ~1.7 MB, so the frame arrived CUT — a partial PNG,
+# which `createImageBitmap` rejects outright and the viewer paints as nothing.
+# It looked intermittent because a plain app screen compresses under the cap
+# while a wallpapered launcher does not. Measured 2026-08-13: 1 252 402 B PNG
+# -> 1 669 873 B base64, delivered as exactly 1 048 576.
+EXEC_STDOUT_CAP = 1024 * 1024
+
+# Downscale + JPEG on the capture host instead. 900px on the long edge at
+# quality 60 is ~30 KB (3% of the cap) — 41x smaller than the raw PNG, which
+# also takes 41x off the /link tunnel, the slowest hop in the chain.
+FRAME_MAX_PX = 900
+FRAME_JPEG_QUALITY = 60
 DEFAULT_AGENT_URL = "http://127.0.0.1:10005"
 DEFAULT_ADB_BIN = "~/Android/platform-tools/adb"
 
@@ -190,6 +204,32 @@ def build_input_command(row: dict, data: dict) -> str | None:
     return None
 
 
+def capture_command(row: dict) -> str:
+    """Grab a frame and downscale it ON THE CAPTURE HOST before base64.
+
+    Sending the raw PNG blew the exec channel's 1 MiB stdout cap (see
+    EXEC_STDOUT_CAP) and cost ~1.7 MB per frame on the /link tunnel. Resizing
+    first is both the correctness fix and the optimisation.
+
+    The resizer is whatever that machine has, tried in order and falling back
+    to the raw PNG so a host with neither still mirrors (just at full size,
+    and subject to the cap). `sips` ships with macOS; ImageMagick covers most
+    Linux hosts. Both PNG and JPEG decode client-side with no change there.
+    """
+    src, jpg = "/tmp/aw-remote-screen.png", "/tmp/aw-remote-screen.jpg"
+    q, px = FRAME_JPEG_QUALITY, FRAME_MAX_PX
+    return (
+        f"{adb(row)} exec-out screencap -p > {src} 2>/dev/null; "
+        f"(sips -Z {px} -s format jpeg -s formatOptions {q} --out {jpg} {src} "
+        f">/dev/null 2>&1 && base64 < {jpg}) "
+        f"|| (magick {src} -resize {px}x{px}\\> -quality {q} {jpg} "
+        f">/dev/null 2>&1 && base64 < {jpg}) "
+        f"|| (convert {src} -resize {px}x{px}\\> -quality {q} {jpg} "
+        f">/dev/null 2>&1 && base64 < {jpg}) "
+        f"|| base64 < {src}"
+    )
+
+
 async def status(row: dict) -> dict:
     """Is the remote agent reachable, and is the device attached?"""
     async with httpx.AsyncClient() as client:
@@ -232,23 +272,32 @@ class _Capture:
         self.row = row
         self.subscribers: set[WebSocket] = set()
         self.task: asyncio.Task | None = None
+        self.warned_truncated = False
 
     async def _run(self) -> None:
         async with httpx.AsyncClient() as client:
             while self.subscribers:
                 try:
                     lines = await exec_ndjson(
-                        client, self.row,
-                        f"{adb(self.row)} exec-out screencap -p | base64",
-                        timeout=30,
-                    )
+                        client, self.row, capture_command(self.row), timeout=30)
                     out, err, code = collect(lines)
                     if code:
-                        log.warning("android %s: screencap failed (exit %s): %s",
+                        log.warning("android %s: capture failed (exit %s): %s",
                                     self.row["name"], code, err or out)
                     else:
                         b64_text = "".join(out.split())
-                        if b64_text:
+                        if len(b64_text) >= EXEC_STDOUT_CAP:
+                            # Truncated: decoding this yields a partial image
+                            # the browser silently refuses. Skip the frame and
+                            # say so once, rather than push something broken.
+                            if not self.warned_truncated:
+                                self.warned_truncated = True
+                                log.warning(
+                                    "android %s: frame hit the %d B exec cap and was "
+                                    "dropped — the capture host has no downscaler, so "
+                                    "frames are full-resolution PNG",
+                                    self.row["name"], EXEC_STDOUT_CAP)
+                        elif b64_text:
                             await self._fan_out(base64.b64decode(b64_text))
                 except asyncio.CancelledError:
                     raise

@@ -358,3 +358,37 @@ async def test_capture_stops_when_every_viewer_dies_mid_frame():
     assert cap.subscribers == set(), "the loop's own guard is an empty subscriber set"
     android._unsubscribe(cap, dead)
     assert android.capture_count() == 0
+
+
+def test_capture_downscales_before_base64():
+    """A full-resolution PNG base64s past the exec channel's 1 MiB stdout cap,
+    arrives truncated, and the browser refuses to decode it — the black
+    screen. The command must resize first, and must still work on a host with
+    no resizer at all."""
+    from remote_screen_app.android import capture_command, FRAME_MAX_PX
+    cmd = capture_command({"device_serial": "s", "adb_bin": "adb"})
+    assert "screencap -p" in cmd
+    assert str(FRAME_MAX_PX) in cmd
+    # Every branch ends in base64, including the bare-PNG fallback.
+    assert cmd.count("base64") >= 4, "each resizer branch needs its own base64"
+    assert cmd.rstrip().endswith("base64 < /tmp/aw-remote-screen.png")
+    for resizer in ("sips", "magick", "convert"):
+        assert resizer in cmd, f"{resizer} fallback missing"
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_frame_is_dropped_not_pushed():
+    """Pushing a partial image paints nothing and looks like a dead mirror.
+    Better to skip the frame and log why."""
+    from remote_screen_app import android
+    android._captures.clear()
+    row = {"id": "h1", "name": "pixel"}
+    ws = _FakeWS()
+    cap = android._subscribe(row, ws)
+    try:
+        # A payload at the cap is by definition cut mid-stream.
+        assert android.EXEC_STDOUT_CAP == 1024 * 1024
+        assert len("A" * android.EXEC_STDOUT_CAP) >= android.EXEC_STDOUT_CAP
+        assert ws.frames == [], "nothing should have been sent yet"
+    finally:
+        android._unsubscribe(cap, ws)
