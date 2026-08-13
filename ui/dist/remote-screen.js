@@ -1,8 +1,8 @@
 const R = "remote-screen.main";
 function j(e) {
-  const { useState: E, useEffect: v, useCallback: M, useRef: k, useSyncExternalStore: _ } = e.React, N = e.app;
+  const { useState: E, useEffect: v, useCallback: M, useRef: N, useSyncExternalStore: $ } = e.React, y = e.app;
   async function C(r, o, a) {
-    const c = { method: r }, l = await N.fetch(o, c);
+    const c = { method: r }, l = await y.fetch(o, c);
     if (!l.ok) {
       let u = "";
       try {
@@ -78,7 +78,7 @@ function j(e) {
           }
           const a = await C("GET", `/hosts/${r}/credentials`);
           t.creds = a, t.set({
-            src: $(r, a.password, t.state.settings),
+            src: _(r, a.password, t.state.settings),
             srcKey: t.state.srcKey + 1,
             error: null
           });
@@ -89,10 +89,10 @@ function j(e) {
     }
   };
   function B() {
-    return _(t.subscribe, t.get);
+    return $(t.subscribe, t.get);
   }
-  function $(r, o, a) {
-    const c = new URL(N.wsUrl(`/ws/bridge/${r}`)), l = new URLSearchParams({
+  function _(r, o, a) {
+    const c = new URL(y.wsUrl(`/ws/bridge/${r}`)), l = new URLSearchParams({
       host: c.hostname,
       port: c.port || (c.protocol === "wss:" ? "443" : "80"),
       path: c.pathname.replace(/^\//, "") + c.search,
@@ -140,7 +140,7 @@ function j(e) {
     );
   }
   function A() {
-    const { hosts: r, selectedId: o } = B(), [a, c] = E(!1), [l, u] = E(null), p = k(null), w = r.find((n) => n.id === o);
+    const { hosts: r, selectedId: o } = B(), [a, c] = E(!1), [l, u] = E(null), p = N(null), w = r.find((n) => n.id === o);
     v(() => {
       t.load();
     }, []);
@@ -225,8 +225,9 @@ function j(e) {
       "button",
       {
         onClick: () => {
-          const { src: n } = t.get();
-          n && n !== "android" && window.open(n, `remote-screen-${o}`, "popup=1,width=1280,height=800");
+          if (!o) return;
+          const { src: n } = t.get(), s = n === "android" ? y.absoluteApiUrl(`/panel/viewer/${o}`) : n;
+          s && window.open(s, `remote-screen-${o}`, "popup=1,width=1280,height=800");
         },
         disabled: !o,
         className: `${b} disabled:opacity-30`,
@@ -236,7 +237,7 @@ function j(e) {
     ));
   }
   function L() {
-    const { hosts: r, selectedId: o, src: a, srcKey: c, error: l } = B(), u = k(null), p = k(null), w = r.find((n) => n.id === o), x = (w == null ? void 0 : w.protocol) === "android";
+    const { hosts: r, selectedId: o, src: a, srcKey: c, error: l } = B(), u = N(null), p = N(null), w = r.find((n) => n.id === o), x = (w == null ? void 0 : w.protocol) === "android";
     v(() => {
       t.load();
     }, []), v(() => {
@@ -264,16 +265,16 @@ function j(e) {
       if (!x || !o) return;
       let n = !0, s = null, i = null, d = 0;
       const h = () => {
-        n && (s = new WebSocket(N.wsUrl(`/ws/android/${o}`)), s.binaryType = "blob", t.androidWs = s, s.onopen = () => {
+        n && (s = new WebSocket(y.wsUrl(`/ws/android/${o}`)), s.binaryType = "blob", t.androidWs = s, s.onopen = () => {
           d = 0, t.set({ error: null });
         }, s.onmessage = async (f) => {
           if (!n || !(f.data instanceof Blob)) return;
-          const m = await createImageBitmap(f.data), y = p.current;
-          if (!y) {
+          const m = await createImageBitmap(f.data), k = p.current;
+          if (!k) {
             m.close();
             return;
           }
-          y.width = m.width, y.height = m.height, y.getContext("2d").drawImage(m, 0, 0), m.close();
+          k.width = m.width, k.height = m.height, k.getContext("2d").drawImage(m, 0, 0), m.close();
         }, s.onclose = () => {
           if (n) {
             if (t.androidWs = null, d += 1, d > 6) {

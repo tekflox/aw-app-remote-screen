@@ -30,6 +30,7 @@ from fastapi.responses import HTMLResponse
 
 from . import android as android_mod
 from .hosts_ui import HOSTS_UI_HTML
+from .viewer_ui import viewer_html
 from .store import HostError, HostNotFound, HostStore, TCP_PROTOCOLS
 
 log = logging.getLogger("aw_apps.remote-screen")
@@ -135,6 +136,21 @@ def build_routes(ctx, store: HostStore) -> FastAPI:
             await ws.close(code=WS_UNSUPPORTED_PROTOCOL)
             return
         await android_mod.stream(ws, row)
+
+    @app.get("/panel/viewer/{host_id}", response_class=HTMLResponse)
+    async def android_viewer(host_id: str) -> HTMLResponse:
+        """Standalone page for "Pop out" on an android host.
+
+        A VNC host pops out to the vendored noVNC document; android had no
+        equivalent, so the button silently did nothing. Served from this app's
+        own origin so the mirror WebSocket is same-origin here."""
+        try:
+            row = store.get(host_id)
+        except HostNotFound:
+            raise HTTPException(404, "Host not found")
+        if row["protocol"] != "android":
+            raise HTTPException(400, "not an android host")
+        return HTMLResponse(viewer_html(row["id"], row["name"]))
 
     # ── WebSocket: raw byte bridge to host:port (websockify-equivalent) ─────
 

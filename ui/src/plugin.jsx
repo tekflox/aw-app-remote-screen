@@ -278,8 +278,17 @@ export function register(host) {
 
         <button
           onClick={() => {
+            if (!selectedId) return;
             const { src } = store.get();
-            if (src && src !== 'android') window.open(src, `remote-screen-${selectedId}`, 'popup=1,width=1280,height=800');
+            // Android's "src" is the sentinel 'android', not a URL — the old
+            // guard skipped it and the button silently did nothing. It pops
+            // out to the app's own standalone viewer instead. absoluteApiUrl
+            // is required: window.open resolves a relative path against the
+            // SPA origin, which does not serve /api.
+            const url = src === 'android'
+              ? api.absoluteApiUrl(`/panel/viewer/${selectedId}`)
+              : src;
+            if (url) window.open(url, `remote-screen-${selectedId}`, 'popup=1,width=1280,height=800');
           }}
           disabled={!selectedId} className={`${btn} disabled:opacity-30`} title="Pop out">
           <svg className={icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

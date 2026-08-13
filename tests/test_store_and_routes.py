@@ -392,3 +392,35 @@ async def test_a_truncated_frame_is_dropped_not_pushed():
         assert ws.frames == [], "nothing should have been sent yet"
     finally:
         android._unsubscribe(cap, ws)
+
+
+def test_android_host_has_a_standalone_viewer_page(client):
+    """Pop out on an android host used to do NOTHING: its `src` is the
+    sentinel 'android', not a URL, and the handler skipped it. There has to be
+    a real document to open."""
+    row = client.post("/hosts", json={"name": "pixel", "protocol": "android",
+                                      "host": "hostid",
+                                      "device_serial": "emulator-5554"}).json()
+    res = client.get(f"/panel/viewer/{row['id']}")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/html")
+    body = res.text
+    assert "/ws/android/" in body, "the page must open the mirror socket"
+    assert "KEYCODE_BACK" in body and "KEYCODE_HOME" in body and "KEYCODE_APP_SWITCH" in body
+    assert row["id"] in body
+
+
+def test_viewer_page_rejects_a_non_android_host(client):
+    vnc = client.post("/hosts", json={"name": "mac", "host": "10.0.0.5", "port": 5900}).json()
+    assert client.get(f"/panel/viewer/{vnc['id']}").status_code == 400
+    assert client.get("/panel/viewer/nope").status_code == 404
+
+
+def test_viewer_page_escapes_a_hostile_name():
+    """Name and id come from the database and land in a <title> and a JS
+    string; a quote in either would break out of both."""
+    from remote_screen_app.viewer_ui import viewer_html
+    html = viewer_html('a"b', '</title><script>alert(1)</script>')
+    assert "<script>alert(1)</script>" not in html
+    assert '&lt;/title&gt;' in html
+    assert '"a\\"b"' in html, "the id must be JSON-encoded into the JS literal"
