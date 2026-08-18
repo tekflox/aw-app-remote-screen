@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "id": "remote-screen",
   "name": "Remote Screen",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "description": "Remote screens in the browser, three protocols behind one viewer: VNC (noVNC over a raw WebSocket->TCP byte bridge), RDP (same bridge, pending a browser-side client), and Android (live ~2 fps screen mirror + tap/swipe/text/key input over the remote-agent exec channel \u2014 no VNC server involved). Hosts live in this app's own Postgres table with per-app SQL migrations; passwords in the workspace secret store. Ports the monolith's src/api/routes/remote_desktop.py + android_viewer.py + RemoteDesktopWindow.jsx.",
   "tier": "inprocess",
   "requires_ui_refresh": true,
@@ -25,8 +25,7 @@
     "routes:register",
     "db:own-tables",
     "secrets:own",
-    "ui:code",
-    "ui:slots:core.nav.workspace"
+    "ui:code"
   ],
   "contributes": {
     "routes": [
@@ -62,7 +61,6 @@
       "mode": "component",
       "bundle": "ui/dist/remote-screen.js",
       "slots": [
-        "core.nav.workspace",
         "core.window.body:remote-screen.main"
       ]
     }

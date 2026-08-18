@@ -1,8 +1,11 @@
 // Integrated-mode entrypoint — dynamic-imported by aw-workspace-ui's
-// loadComponentPlugin() once this app is installed with "ui:code" +
-// "ui:slots:core.nav.workspace" granted. Built by `npm run build` ->
-// ui/dist/remote-screen.js, referenced from aw-app.json's
-// contributes.frontend.bundle.
+// loadComponentPlugin() once this app is installed with "ui:code" granted.
+// Built by `npm run build` -> ui/dist/remote-screen.js, referenced from
+// aw-app.json's contributes.frontend.bundle.
+//
+// No Workspace-sidebar nav row: the app already surfaces via the Apps grid
+// (contributes.windows), and duplicating it into core.nav.workspace was
+// removed on 2026-08-18.
 //
 // Ported from the monolith's src/app/src/components/RemoteDesktopWindow.jsx.
 // Four deliberate differences:
@@ -159,16 +162,6 @@ export function register(host) {
     return `/novnc/vnc.html?${params.toString()}`;
   }
 
-  function MonitorIcon({ className }) {
-    return (
-      <svg className={className || 'w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]'}
-        viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-        strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8M12 17v4" />
-      </svg>
-    );
-  }
-
   const openSettings = () => window.__awOpenAppWindow?.('remote-screen.hosts');
 
   // Bottom-bar navigation: 32px icons (double the title bar's 16px) with a
@@ -176,19 +169,6 @@ export function register(host) {
   // more than any viewer chrome, and often on a touchscreen.
   const navBtn = 'p-2 rounded-lg hover:bg-white/10 active:bg-white/20 transition-colors';
   const navIcon = 'w-8 h-8 text-[var(--color-text-primary)]';
-
-  // ── 1. Workspace nav row ────────────────────────────────────────────────
-  function RemoteScreenNavRow() {
-    return (
-      <button
-        onClick={() => window.__awOpenAppWindow?.(WIN_ID)}
-        className="w-full text-left px-3 py-2 hover:bg-white/5 transition-colors flex items-center gap-2"
-      >
-        <MonitorIcon />
-        <span className="text-xs text-[var(--color-text-primary)]">Remote Screen</span>
-      </button>
-    );
-  }
 
   // ── 2. Title-bar actions ────────────────────────────────────────────────
   function RemoteScreenWindowActions() {
@@ -494,7 +474,6 @@ export function register(host) {
     );
   }
 
-  host.registerSlot('core.nav.workspace', RemoteScreenNavRow);
   host.registerWindow(WIN_ID, RemoteScreenWindowBody);
   host.registerWindowActions(WIN_ID, RemoteScreenWindowActions);
 }
