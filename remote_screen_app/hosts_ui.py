@@ -71,6 +71,13 @@ HOSTS_UI_HTML = """<!doctype html>
   button.ghost:hover { color: inherit; }
   button.danger:hover { background: rgba(248,113,113,.14);
                         border-color: rgba(248,113,113,.45); color: #f87171; }
+  /* The armed half of the two-click delete — filled, so "one more click and
+     it's gone" doesn't depend on reading the label. The :hover variant repeats
+     the whole declaration because `button.danger:hover` above is more specific
+     than a bare `.danger.armed`, and the armed button is ALWAYS hovered: it
+     renders exactly under the cursor that just clicked Delete. */
+  button.danger.armed, button.danger.armed:hover {
+    background: #f87171; border-color: #f87171; color: #2a0808; font-weight: 600; }
 
   h4 { margin: 18px 0 8px; font-size: 11px; text-transform: uppercase;
        letter-spacing: .05em; color: var(--muted); font-weight: 600; }
@@ -172,6 +179,12 @@ const BASE = '/api/apps/remote-screen';
 const $ = (id) => document.getElementById(id);
 const ANDROID_ONLY = ['device_serial', 'adb_bin', 'agent_base_url', 'agent_kind'];
 let hosts = [];
+// Id of the host whose Delete is armed. This panel CANNOT use confirm(): the
+// host renders it in a sandbox without allow-modals (aw-workspace-ui
+// AppWindow.jsx — "allow-scripts allow-forms allow-same-origin"), so the
+// browser ignores the call and returns false. `if (!confirm(...)) return;`
+// was therefore an unconditional return and Delete silently did nothing.
+let armed = null;
 
 async function call(method, path, body) {
   const init = { method, credentials: 'include' };
@@ -214,7 +227,10 @@ function render() {
     +     esc(h.protocol.toUpperCase()) + '</span>'
     +   '<span class="actions">'
     +     '<button class="ghost" data-edit="' + esc(h.id) + '">Edit</button>'
-    +     '<button class="ghost danger" data-del="' + esc(h.id) + '">Delete</button>'
+    +     (armed === h.id
+              ? '<button class="ghost danger armed" data-confirm-del="' + esc(h.id) + '">Confirm</button>'
+                + '<button class="ghost" data-cancel-del="1">Cancel</button>'
+              : '<button class="ghost danger" data-del="' + esc(h.id) + '">Delete</button>')
     +   '</span>'
     + '</div>'
     + '<div class="addr" title="' + esc(addrOf(h)) + '">' + esc(addrOf(h)) + '</div>'
@@ -311,13 +327,21 @@ $('list').addEventListener('click', async (e) => {
   if (!b) return;
   const del = b.getAttribute('data-del');
   const edit = b.getAttribute('data-edit');
+  const confirmDel = b.getAttribute('data-confirm-del');
   if (edit) return loadForEdit(edit);
-  if (!del) return;
-  const h = hosts.find((x) => x.id === del);
-  if (!confirm('Delete "' + (h ? h.name : del) + '"? Its saved password is deleted too.')) return;
+  if (b.hasAttribute('data-cancel-del')) { armed = null; return render(); }
+  if (del) {
+    const h = hosts.find((x) => x.id === del);
+    armed = del;
+    render();
+    say('Deleting "' + esc(h ? h.name : del) + '" also deletes its saved password. Click Confirm.', 'err');
+    return;
+  }
+  if (!confirmDel) return;
+  armed = null;
   try {
-    await call('DELETE', '/hosts/' + encodeURIComponent(del));
-    if ($('id').value === del) resetForm();
+    await call('DELETE', '/hosts/' + encodeURIComponent(confirmDel));
+    if ($('id').value === confirmDel) resetForm();
     await refresh();
     say('Deleted.', 'ok');
   } catch (err) { say(esc(err.message), 'err'); }
