@@ -10,10 +10,13 @@ escape hatch for exactly this, and ``apiUrl()`` rewrites the src to the
 workspace API origin — which is also the origin this page's own fetches go to,
 so the apex ``aw_id_jwt`` cookie authorises them.
 
-**Layout constraint:** the host renders this in `.appwin-iframe`, a
-`min-height: 320px` box inside the Settings sidebar — narrow and short. A
-multi-column table there wraps every cell into a vertical ribbon and pushes the
-row actions off the right edge. One card per host, stacked, is what fits.
+**Layout constraint:** the narrow case still rules the markup. In the Settings
+sidebar the host renders this in a short `.appwin-iframe` box, where a
+multi-column table wraps every cell into a vertical ribbon and pushes the row
+actions off the right edge — one card per host, stacked, is what fits. As of
+aw-workspace-ui's 2026-08-21 gutter/height pass the SAME page also fills a
+full, resizable window (~1200px), so the stylesheet caps its measure and goes
+two-up above 620px rather than stretching one column across the lot.
 
 Deliberately dependency-free (no build step, no framework): this is a settings
 pane, and a second npm bundle to maintain for one CRUD list is not worth it.
@@ -43,6 +46,28 @@ HOSTS_UI_HTML = """<!doctype html>
      (tried, reverted). Without this the form sits flush against the frame. */
   body { margin: 0; padding: 12px; font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
          background: transparent; color: inherit; }
+
+  /* This page is sized by whatever box embeds it, and that box is no longer
+     always the narrow Settings sidebar — since the host lets a window's iframe
+     take the full window height/width, a maximised Remote Screen — Hosts is
+     ~1200px across. Left alone, every input stretched the whole way: a 1200px
+     field for "5900" is a worse target than a 400px one, not a better one.
+     Cap the measure, left-aligned so it stays flush with the window heading
+     rendered ABOVE this frame by the host's markdown widget — centring it
+     instead left the two visibly out of step. The sidebar is narrower than the
+     cap, so nothing changes there. */
+  #msg, #list, #form-title, #form { max-width: 760px; }
+
+  /* Above the cap there is room for two fields per line. Grid (not the
+     existing .row2 flex) because the form's fields are shown and hidden per
+     protocol — ANDROID_ONLY toggles four of them — and grid reflows around a
+     display:none item on its own instead of leaving a hole. Rows that are
+     already a pair, plus the hint and the buttons, span the full width. */
+  @media (min-width: 620px) {
+    #form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0 14px; align-items: start; }
+    #form > .row2, #form > .hint, #form > .form-actions { grid-column: 1 / -1; }
+  }
 
   .card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
           margin-bottom: 8px; background: var(--panel); }
