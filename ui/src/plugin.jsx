@@ -56,7 +56,19 @@ export function register(host) {
   // they are registered as two INDEPENDENT slot components — so they cannot
   // share React state through a common parent. A module-scoped store with
   // useSyncExternalStore is the smallest thing that keeps them in step.
-  const store = {
+  //
+  // Parked on `window`, not just module-scoped: wireContributions.jsx does a
+  // full dispose+re-import of EVERY component-mode plugin's bundle whenever
+  // ANY app's contributions payload changes (not just this one's) — including
+  // on the `focus` event usePluginContributions fires on every alt-tab back
+  // into the tab. A plain module-scoped store would be recreated empty by
+  // that re-import, so the picker flashed "No hosts" and the live noVNC
+  // iframe got torn down and reconnected from scratch on every refocus, even
+  // though nothing about Remote Screen itself had changed. Surviving on
+  // `window` (same pattern as `window.__AW_PLUGIN_HOST__`) means a re-import
+  // picks the already-loaded hosts/selectedId/src back up instead of
+  // reverting to empty.
+  const store = window.__awRemoteScreenStore || (window.__awRemoteScreenStore = {
     state: {
       hosts: [], settings: null, selectedId: '', src: '', srcKey: 0, error: null,
     },
@@ -137,7 +149,7 @@ export function register(host) {
         store.set({ error: e.message });
       }
     },
-  };
+  });
 
   function useViewer() {
     return useSyncExternalStore(store.subscribe, store.get);

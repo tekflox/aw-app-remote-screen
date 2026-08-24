@@ -1,20 +1,20 @@
 const O = "remote-screen.main";
 function j(e) {
-  const { useState: $, useEffect: N, useCallback: _, useRef: W, useSyncExternalStore: P } = e.React, E = e.app;
-  async function S(r, o, a) {
-    const l = { method: r }, i = await E.fetch(o, l);
+  const { useState: K, useEffect: N, useCallback: $, useRef: W, useSyncExternalStore: P } = e.React, S = e.app;
+  async function E(r, o, a) {
+    const l = { method: r }, i = await S.fetch(o, l);
     if (!i.ok) {
-      let p = "";
+      let w = "";
       try {
-        p = (await i.json()).detail || "";
+        w = (await i.json()).detail || "";
       } catch {
-        p = await i.text();
+        w = await i.text();
       }
-      throw new Error(`${i.status}: ${p}`);
+      throw new Error(`${i.status}: ${w}`);
     }
     return i.json();
   }
-  const t = {
+  const t = window.__awRemoteScreenStore || (window.__awRemoteScreenStore = {
     state: {
       hosts: [],
       settings: null,
@@ -41,8 +41,8 @@ function j(e) {
       return t.loading || (t.loading = (async () => {
         try {
           const [{ hosts: r }, o] = await Promise.all([
-            S("GET", "/hosts"),
-            S("GET", "/settings")
+            E("GET", "/hosts"),
+            E("GET", "/settings")
           ]);
           t.set({ hosts: r || [], settings: o, error: null }), !t.state.selectedId && (r != null && r.length) && t.select(r[0].id);
         } catch (r) {
@@ -76,7 +76,7 @@ function j(e) {
             t.creds = null, t.set({ src: "android", srcKey: t.state.srcKey + 1, error: null });
             return;
           }
-          const a = await S("GET", `/hosts/${r}/credentials`);
+          const a = await E("GET", `/hosts/${r}/credentials`);
           t.creds = a, t.set({
             src: U(r, a.password, t.state.settings),
             srcKey: t.state.srcKey + 1,
@@ -87,12 +87,12 @@ function j(e) {
         }
       }
     }
-  };
+  });
   function I() {
     return P(t.subscribe, t.get);
   }
   function U(r, o, a) {
-    const l = new URL(E.wsUrl(`/ws/bridge/${r}`)), i = new URLSearchParams({
+    const l = new URL(S.wsUrl(`/ws/bridge/${r}`)), i = new URLSearchParams({
       host: l.hostname,
       port: l.port || (l.protocol === "wss:" ? "443" : "80"),
       path: l.pathname.replace(/^\//, "") + l.search,
@@ -108,18 +108,18 @@ function j(e) {
   const A = () => {
     var r;
     return (r = window.__awOpenAppWindow) == null ? void 0 : r.call(window, "remote-screen.hosts");
-  }, M = "p-2 rounded-lg hover:bg-white/10 active:bg-white/20 transition-colors", B = "w-8 h-8 text-[var(--color-text-primary)]";
+  }, M = "p-2 rounded-lg hover:bg-white/10 active:bg-white/20 transition-colors", _ = "w-8 h-8 text-[var(--color-text-primary)]";
   function D() {
-    const { hosts: r, selectedId: o } = I(), [a, l] = $(!1), [i, p] = $(null), b = W(null), g = r.find((s) => s.id === o);
+    const { hosts: r, selectedId: o } = I(), [a, l] = K(!1), [i, w] = K(null), b = W(null), g = r.find((s) => s.id === o);
     N(() => {
       t.load();
     }, []);
-    const v = _(() => {
+    const v = $(() => {
       l((s) => {
         var h;
         if (s) return !1;
         const u = (h = b.current) == null ? void 0 : h.getBoundingClientRect();
-        return u && p({ top: u.bottom + 6, left: u.left }), !0;
+        return u && w({ top: u.bottom + 6, left: u.left }), !0;
       });
     }, []);
     N(() => {
@@ -196,7 +196,7 @@ function j(e) {
       {
         onClick: () => {
           if (!o) return;
-          const { src: s } = t.get(), u = s === "android" ? E.absoluteApiUrl(`/panel/viewer/${o}`) : s;
+          const { src: s } = t.get(), u = s === "android" ? S.absoluteApiUrl(`/panel/viewer/${o}`) : s;
           u && window.open(u, `remote-screen-${o}`, "popup=1,width=1280,height=800");
         },
         disabled: !o,
@@ -207,26 +207,26 @@ function j(e) {
     ));
   }
   function L() {
-    const { hosts: r, selectedId: o, src: a, srcKey: l, error: i } = I(), p = W(null), b = W(null), g = r.find((d) => d.id === o), v = (g == null ? void 0 : g.protocol) === "android";
+    const { hosts: r, selectedId: o, src: a, srcKey: l, error: i } = I(), w = W(null), b = W(null), g = r.find((d) => d.id === o), v = (g == null ? void 0 : g.protocol) === "android";
     N(() => {
       t.load();
     }, []), N(() => {
-      t.iframe = p.current;
+      t.iframe = w.current;
     }, [l]);
-    const C = _(() => {
+    const C = $(() => {
       var x;
-      const d = (x = p.current) == null ? void 0 : x.contentWindow, n = t.creds;
-      if (t.iframe = p.current, !d || !n || !n.password && !n.username) return;
+      const d = (x = w.current) == null ? void 0 : x.contentWindow, n = t.creds;
+      if (t.iframe = w.current, !d || !n || !n.password && !n.username) return;
       let c = 0;
       const f = () => {
         var m;
-        const w = (m = d.UI) == null ? void 0 : m.rfb;
-        if (!w) {
+        const p = (m = d.UI) == null ? void 0 : m.rfb;
+        if (!p) {
           ++c < 40 && setTimeout(f, 100);
           return;
         }
-        w.addEventListener("credentialsrequired", () => {
-          w.sendCredentials({ username: n.username || "", password: n.password || "" });
+        p.addEventListener("credentialsrequired", () => {
+          p.sendCredentials({ username: n.username || "", password: n.password || "" });
         });
       };
       f();
@@ -235,11 +235,11 @@ function j(e) {
       if (!v || !o) return;
       let d = !0, n = null, c = null, f = 0;
       const x = () => {
-        d && (n = new WebSocket(E.wsUrl(`/ws/android/${o}`)), n.binaryType = "blob", t.androidWs = n, n.onopen = () => {
+        d && (n = new WebSocket(S.wsUrl(`/ws/android/${o}`)), n.binaryType = "blob", t.androidWs = n, n.onopen = () => {
           f = 0, t.set({ error: null });
-        }, n.onmessage = async (w) => {
-          if (!d || !(w.data instanceof Blob)) return;
-          const m = await createImageBitmap(w.data), y = b.current;
+        }, n.onmessage = async (p) => {
+          if (!d || !(p.data instanceof Blob)) return;
+          const m = await createImageBitmap(p.data), y = b.current;
           if (!y) {
             m.close();
             return;
@@ -266,8 +266,8 @@ function j(e) {
     const k = (d) => {
       const n = b.current;
       if (!n || !n.width || !n.height) return null;
-      const c = n.getBoundingClientRect(), f = n.width / n.height, x = c.width / c.height, w = f > x ? c.width : c.height * f, m = f > x ? c.width / f : c.height, y = (d.clientX - (c.left + (c.width - w) / 2)) / w, K = (d.clientY - (c.top + (c.height - m) / 2)) / m;
-      return y < 0 || y > 1 || K < 0 || K > 1 ? null : { nx: y, ny: K };
+      const c = n.getBoundingClientRect(), f = n.width / n.height, x = c.width / c.height, p = f > x ? c.width : c.height * f, m = f > x ? c.width / f : c.height, y = (d.clientX - (c.left + (c.width - p) / 2)) / p, B = (d.clientY - (c.top + (c.height - m) / 2)) / m;
+      return y < 0 || y > 1 || B < 0 || B > 1 ? null : { nx: y, ny: B };
     }, s = (d) => {
       const n = t.androidWs;
       (n == null ? void 0 : n.readyState) === WebSocket.OPEN && n.send(JSON.stringify(d));
@@ -304,7 +304,7 @@ function j(e) {
     ) : /* @__PURE__ */ e.h(
       "iframe",
       {
-        ref: p,
+        ref: w,
         key: l,
         src: a,
         onLoad: C,
@@ -315,7 +315,7 @@ function j(e) {
                           bg-[var(--color-bg-header)] border-t border-[var(--color-border)]` }, /* @__PURE__ */ e.h("button", { onClick: () => t.sendKey("KEYCODE_BACK"), className: M, title: "Back" }, /* @__PURE__ */ e.h(
       "svg",
       {
-        className: B,
+        className: _,
         viewBox: "0 0 24 24",
         fill: "none",
         stroke: "currentColor",
@@ -324,7 +324,7 @@ function j(e) {
         strokeLinejoin: "round"
       },
       /* @__PURE__ */ e.h("polyline", { points: "15 18 9 12 15 6" })
-    )), /* @__PURE__ */ e.h("button", { onClick: () => t.sendKey("KEYCODE_HOME"), className: M, title: "Home" }, /* @__PURE__ */ e.h("svg", { className: B, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("circle", { cx: "12", cy: "12", r: "8" }))), /* @__PURE__ */ e.h("button", { onClick: () => t.sendKey("KEYCODE_APP_SWITCH"), className: M, title: "Recents" }, /* @__PURE__ */ e.h("svg", { className: B, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("rect", { x: "5", y: "5", width: "14", height: "14", rx: "1.5" })))));
+    )), /* @__PURE__ */ e.h("button", { onClick: () => t.sendKey("KEYCODE_HOME"), className: M, title: "Home" }, /* @__PURE__ */ e.h("svg", { className: _, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("circle", { cx: "12", cy: "12", r: "8" }))), /* @__PURE__ */ e.h("button", { onClick: () => t.sendKey("KEYCODE_APP_SWITCH"), className: M, title: "Recents" }, /* @__PURE__ */ e.h("svg", { className: _, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ e.h("rect", { x: "5", y: "5", width: "14", height: "14", rx: "1.5" })))));
   }
   e.registerWindow(O, L), e.registerWindowActions(O, D);
 }
