@@ -362,9 +362,19 @@ export function register(host) {
           c.getContext('2d').drawImage(bmp, 0, 0);
           bmp.close();
         };
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           if (!alive) return;
           store.androidWs = null;
+          // IdentityGuard closes 4401 (also 4403/4426) when the workspace
+          // session itself is invalid — auto-reconnecting into that wall
+          // hides a "logged out" state forever. Stop, surface it, and let
+          // the host app's aw-auth-failed listener put the user back at
+          // login instead of endlessly retrying against the auth wall.
+          if (event.code === 4401 || event.code === 4403 || event.code === 4426) {
+            store.set({ error: 'Session expired — log in again.' });
+            try { window.dispatchEvent(new Event('aw-auth-failed')); } catch {}
+            return;
+          }
           attempt += 1;
           if (attempt > 6) { store.set({ error: 'Android stream lost — press Reconnect.' }); return; }
           timer = setTimeout(connect, Math.min(1000 * attempt, 5000));
