@@ -11,6 +11,8 @@ is RELATIVE — see ``aw-app-template/template_app/routes.py`` for the contract.
     DELETE /hosts/{id}                delete (+ purge its secret)
     GET    /hosts/{id}/credentials    plaintext password, for noVNC's client-
                                       side DES challenge-response
+    GET    /remote-hosts              linked aw-remote-host machines, for the
+                                      Destination picker
     WS     /ws/bridge/{id}            raw byte bridge to the host's host:port
 
 The bridge carries no VNC-protocol awareness at all — it is byte-for-byte
@@ -19,6 +21,12 @@ also precisely why only VNC works: noVNC speaks RFB over this socket. RDP has
 no browser-side client that can drive a raw TCP tunnel, so a host stored with
 ``protocol: "rdp"`` is rejected here with a distinct close code instead of
 being handed a stream nothing on the other end can parse.
+
+A host whose ``dest_kind`` is ``remote_host`` has no TCP socket to dial from
+here at all — ``host``/``port`` are on THAT machine's own network, so the
+bridge dials through ``remote_dial.open_bridge`` instead, which asks the
+linked host to dial on our behalf over the /link tunnel it already holds
+open (same mechanism ``aw-app-tunnel`` uses for its own tunnels).
 """
 from __future__ import annotations
 
@@ -29,7 +37,9 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from . import android as android_mod
+from . import remote_dial
 from .hosts_ui import HOSTS_UI_HTML
+from .remote_hosts import list_linked_hosts
 from .viewer_ui import viewer_html
 from .store import HostError, HostNotFound, HostStore, TCP_PROTOCOLS
 
@@ -53,6 +63,13 @@ def build_routes(ctx, store: HostStore) -> FastAPI:
     @app.get("/hosts")
     async def list_hosts() -> dict:
         return {"hosts": store.list()}
+
+    @app.get("/remote-hosts")
+    async def remote_hosts() -> dict:
+        """Linked aw-remote-host machines, for the Destination picker. Returns
+        an empty list (never a 500) when the credential isn't published — the
+        picker just falls back to the ``custom`` destination."""
+        return await list_linked_hosts()
 
     @app.post("/hosts")
     async def create_host(body: dict = Body(...)) -> dict:
@@ -168,6 +185,24 @@ def build_routes(ctx, store: HostStore) -> FastAPI:
             return
 
         await ws.accept()
+
+        if row["dest_kind"] == "remote_host":
+            # The address is on THAT machine's network, not ours — it dials
+            # for us over the /link tunnel it already holds open.
+            try:
+                relay = await remote_dial.open_bridge(
+                    row["remote_host_id"], row["host"], row["port"])
+            except remote_dial.RemoteDialError as e:
+                log.warning("remote-screen %s: relay dial to host %s (%s:%s) failed: %s",
+                            host_id, row["remote_host_id"], row["host"], row["port"], e)
+                await ws.close(code=WS_CONNECT_FAILED)
+                return
+            try:
+                await remote_dial.pump(ws, relay)
+            finally:
+                await relay.close()
+            return
+
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(row["host"], row["port"]),

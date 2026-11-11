@@ -9,10 +9,13 @@ is core's job and is already covered by aw-workspace's
 """
 from __future__ import annotations
 
+import asyncio
+import re
 import sys
 from pathlib import Path
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -97,6 +100,73 @@ def test_bad_input_rejected(store, body):
         store.create(body)
 
 
+def test_migrations_never_contain_a_bind_param_looking_colon():
+    """The migration runner treats any ``:word`` as a bind param — a stray one
+    in a comment (e.g. "host:port") breaks the whole migration, not just the
+    comment. Scan every migration file, not just the newest."""
+    mig_dir = Path(__file__).resolve().parent.parent / "migrations"
+    for path in sorted(mig_dir.glob("*.sql")):
+        assert not re.search(r":[A-Za-z_]", path.read_text()), path.name
+
+
+# ── Destination: custom vs. remote_host ─────────────────────────────────────
+
+def test_custom_destination_is_the_default(store):
+    row = store.create({"name": "mac", "host": "127.0.0.1", "port": 5900})
+    assert row["dest_kind"] == "custom"
+    assert row["remote_host_id"] == ""
+
+
+def test_remote_host_destination_round_trips(store):
+    row = store.create({"name": "mac", "host": "127.0.0.1", "port": 5900,
+                        "dest_kind": "remote_host", "remote_host_id": "h1"})
+    assert row["dest_kind"] == "remote_host"
+    assert row["remote_host_id"] == "h1"
+    assert store.list()[0]["remote_host_id"] == "h1"
+    assert store.get(row["id"])["remote_host_id"] == "h1"
+
+
+def test_remote_host_destination_requires_a_host_id(store):
+    with pytest.raises(HostError):
+        store.create({"name": "mac", "host": "127.0.0.1", "port": 5900,
+                      "dest_kind": "remote_host"})
+
+
+def test_unknown_dest_kind_rejected(store):
+    with pytest.raises(HostError):
+        store.create({"name": "mac", "host": "127.0.0.1", "port": 5900,
+                      "dest_kind": "bogus", "remote_host_id": "h1"})
+
+
+def test_remote_host_destination_only_applies_to_tcp_protocols(store):
+    """Android has its own exec channel (agent_kind) — the /link relay is a
+    TCP-only destination and must never apply to it."""
+    with pytest.raises(HostError):
+        store.create({"name": "pixel", "protocol": "android", "host": "macbook-fred",
+                      "dest_kind": "remote_host", "remote_host_id": "h1"})
+
+
+def test_update_can_switch_to_remote_host_destination(store):
+    row = store.create({"name": "mac", "host": "127.0.0.1", "port": 5900})
+    updated = store.update(row["id"], {"dest_kind": "remote_host", "remote_host_id": "h1"})
+    assert updated["dest_kind"] == "remote_host"
+    assert updated["remote_host_id"] == "h1"
+
+
+def test_update_to_remote_host_without_a_host_id_is_rejected(store):
+    row = store.create({"name": "mac", "host": "127.0.0.1", "port": 5900})
+    with pytest.raises(HostError):
+        store.update(row["id"], {"dest_kind": "remote_host"})
+
+
+def test_update_back_to_custom_clears_the_remote_host_id(store):
+    row = store.create({"name": "mac", "host": "127.0.0.1", "port": 5900,
+                        "dest_kind": "remote_host", "remote_host_id": "h1"})
+    updated = store.update(row["id"], {"dest_kind": "custom"})
+    assert updated["dest_kind"] == "custom"
+    assert updated["remote_host_id"] == ""
+
+
 def test_rdp_is_storable_but_flagged_unsupported(store):
     row = store.create({"name": "win-box", "host": "10.0.0.7", "port": 3389,
                         "protocol": "rdp"})
@@ -124,6 +194,99 @@ def test_http_error_codes(client):
     assert client.get("/hosts/nope/credentials").status_code == 404
     assert client.put("/hosts/nope", json={"name": "y"}).status_code == 404
     assert client.delete("/hosts/nope").status_code == 404
+
+
+# ── Destination relay (remote_host) ─────────────────────────────────────────
+
+def test_remote_hosts_endpoint_degrades_without_a_credential(client, monkeypatch):
+    """Never a 500 — a missing credential just empties the dropdown, same as
+    aw-app-tunnel's own ``GET /remote-hosts``."""
+    import remote_screen_app.remote_hosts as remote_hosts_mod
+    monkeypatch.setattr(remote_hosts_mod, "_env", lambda name: "")
+    res = client.get("/remote-hosts")
+    assert res.status_code == 200
+    assert res.json() == {"hosts": [], "error": "no workspace host credential published"}
+
+
+def test_bridge_dispatches_remote_host_rows_to_the_relay(client, monkeypatch):
+    """A ``remote_host`` row must never attempt a direct TCP dial — the
+    address is on THAT machine's network, which this workspace has no route
+    to. Mocking ``open_bridge`` to fail proves the relay path was chosen
+    (and with the right args) without needing a real /link connection."""
+    import remote_screen_app.routes as routes_mod
+
+    created = client.post("/hosts", json={
+        "name": "mac", "host": "127.0.0.1", "port": 5900,
+        "dest_kind": "remote_host", "remote_host_id": "h1",
+    }).json()
+    assert created["dest_kind"] == "remote_host"
+
+    calls = []
+
+    async def fake_open_bridge(remote_host_id, host, port):
+        calls.append((remote_host_id, host, port))
+        raise routes_mod.remote_dial.RemoteDialError("no route to host")
+
+    async def must_not_dial_directly(*a, **kw):
+        raise AssertionError("a remote_host destination must not open a direct TCP socket")
+
+    monkeypatch.setattr(routes_mod.remote_dial, "open_bridge", fake_open_bridge)
+    monkeypatch.setattr(routes_mod.asyncio, "open_connection", must_not_dial_directly)
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/ws/bridge/{created['id']}") as ws:
+            ws.receive_bytes()
+    assert exc_info.value.code == routes_mod.WS_CONNECT_FAILED
+    assert calls == [("h1", "127.0.0.1", 5900)]
+
+
+def test_bridge_pumps_bytes_through_a_working_relay(client, monkeypatch):
+    """The success path: once ``open_bridge`` returns, bytes sent by the
+    browser must reach the relay, and bytes from the relay must reach the
+    browser — ``remote_dial.pump`` wired up, not bypassed."""
+    import remote_screen_app.routes as routes_mod
+
+    created = client.post("/hosts", json={
+        "name": "mac", "host": "127.0.0.1", "port": 5900,
+        "dest_kind": "remote_host", "remote_host_id": "h1",
+    }).json()
+
+    class _FakeBridge:
+        """An echo relay: whatever is sent to it comes back out the async
+        iterator, prefixed, exactly like a real relay forwarding the target
+        host's own reply. ``__anext__`` blocks on a queue rather than racing
+        to StopAsyncIteration before the browser's first message arrives."""
+
+        def __init__(self):
+            self.sent = []
+            self.closed = False
+            self._queue = asyncio.Queue()
+
+        async def send(self, data):
+            self.sent.append(data)
+            await self._queue.put(b"echo:" + data)
+
+        async def close(self):
+            self.closed = True
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return await self._queue.get()
+
+    bridge = _FakeBridge()
+
+    async def fake_open_bridge(remote_host_id, host, port):
+        return bridge
+
+    monkeypatch.setattr(routes_mod.remote_dial, "open_bridge", fake_open_bridge)
+
+    with client.websocket_connect(f"/ws/bridge/{created['id']}") as ws:
+        ws.send_bytes(b"hello")
+        assert ws.receive_bytes() == b"echo:hello"
+    assert bridge.sent == [b"hello"]
+    assert bridge.closed is True
 
 
 def test_settings_endpoint_reflects_config(ctx, store):
@@ -523,3 +686,23 @@ def test_panel_javascript_actually_parses():
         assert proc.returncode == 0, proc.stderr
     finally:
         os.unlink(path)
+
+
+# ── remote_dial module ──────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_remote_dial_without_a_credential_fails_loudly(monkeypatch):
+    from remote_screen_app import remote_dial
+    monkeypatch.setattr(remote_dial, "_env", lambda name: "")
+    with pytest.raises(remote_dial.RemoteDialError):
+        await remote_dial.open_bridge("h1", "127.0.0.1", 5900)
+
+
+def test_bridge_url_targets_the_backend_relay(monkeypatch):
+    from remote_screen_app import remote_dial
+    monkeypatch.setattr(remote_dial, "_env", lambda n: {
+        "AW_BACKEND_URL": "https://api.example.com", "AW_WORKSPACE": "aw",
+    }.get(n, ""))
+    url = remote_dial.bridge_url("host-1", "127.0.0.1", 5900)
+    assert url == ("wss://api.example.com/api/workspaces/aw/remote-hosts/"
+                   "host-1/tcp?host=127.0.0.1&port=5900")

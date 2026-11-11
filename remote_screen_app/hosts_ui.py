@@ -146,6 +146,20 @@ HOSTS_UI_HTML = """<!doctype html>
     </select>
   </div>
 
+  <div class="field" id="dest-field">
+    <label for="dest_kind">Destination</label>
+    <select id="dest_kind">
+      <option value="custom">Custom address (IP / hostname)</option>
+      <option value="remote_host">Linked remote host (over its /link tunnel)</option>
+    </select>
+  </div>
+
+  <div class="field" id="rh-field" hidden>
+    <label for="remote_host_id">Remote host</label>
+    <select id="remote_host_id"></select>
+    <div class="hint" id="rh-hint"></div>
+  </div>
+
   <div class="field">
     <label for="agent_kind" id="kind-label">Exec channel</label>
     <select id="agent_kind">
@@ -204,6 +218,7 @@ const BASE = '/api/apps/remote-screen';
 const $ = (id) => document.getElementById(id);
 const ANDROID_ONLY = ['device_serial', 'adb_bin', 'agent_base_url', 'agent_kind'];
 let hosts = [];
+let remoteHosts = [];
 // Id of the host whose Delete is armed. This panel CANNOT use confirm(): the
 // host renders it in a sandbox without allow-modals (aw-workspace-ui
 // AppWindow.jsx — "allow-scripts allow-forms allow-same-origin"), so the
@@ -284,14 +299,49 @@ function applyProtocol() {
   $('creds-row').hidden = android;
   $('pw-hint').hidden = android;
   $('port').required = !android;
+  $('dest-field').hidden = android;
   $('host-label').textContent = android ? 'Agent profile' : 'Host';
   applyAgentKind();
-  if (!android) {
+  if (android) {
+    // Android has its own exec channel (agent_kind) — the /link relay below
+    // is a TCP-only destination and must never be submitted for it.
+    $('dest_kind').value = 'custom';
+    $('rh-field').hidden = true;
+  } else {
+    applyDestKind();
+  }
+}
+$('protocol').addEventListener('change', applyProtocol);
+
+// Mirrors aw-app-tunnel's own Destination toggle: a remote_host destination
+// has no TCP socket to dial from here at all, so the host:port fields below
+// mean "as resolved on THAT machine", not "reachable from this workspace".
+function applyDestKind() {
+  const remote = $('dest_kind').value === 'remote_host';
+  $('rh-field').hidden = !remote;
+  $('host-label').textContent = remote ? 'Host (as seen there)' : 'Host';
+  if (remote) {
+    if (!$('host').value) $('host').value = '127.0.0.1';
+    $('host-hint').innerHTML = 'The host:port below is resolved ON that machine, not from here.';
+  } else {
     $('host-hint').innerHTML = 'Resolved from inside this workspace, not from your laptop '
       + '&mdash; a machine on your own LAN needs a reachable address or a tunnel.';
   }
 }
-$('protocol').addEventListener('change', applyProtocol);
+$('dest_kind').addEventListener('change', applyDestKind);
+
+async function loadHosts() {
+  let payload = { hosts: [], error: 'not loaded' };
+  try { payload = await call('GET', '/remote-hosts'); } catch (e) { payload.error = e.message; }
+  remoteHosts = payload.hosts || [];
+  $('remote_host_id').innerHTML = remoteHosts.length
+    ? remoteHosts.map((h) => '<option value="' + esc(h.id) + '">' + esc(h.hostname) +
+        ' (' + esc(h.os) + ', ' + (h.connected ? 'online' : 'offline') + ')</option>').join('')
+    : '<option value="">no linked hosts found</option>';
+  $('rh-hint').textContent = payload.error
+    ? 'Could not list linked hosts: ' + payload.error
+    : 'Pick the machine to relay through \\u2014 its own /link tunnel does the dialling.';
+}
 
 // The two channels want DIFFERENT things in `host`, and getting that wrong is
 // the likeliest way to end up with a host that just times out: one wants a
@@ -315,6 +365,7 @@ function resetForm() {
   $('form').reset();
   $('protocol').value = 'vnc';
   $('agent_kind').value = 'aw_remote_host';
+  $('dest_kind').value = 'custom';
   $('form-title').textContent = 'Add a host';
   $('save').textContent = 'Add host';
   $('cancel').hidden = true;
@@ -332,6 +383,7 @@ function loadForEdit(id) {
   $('port').value = h.port || '';
   $('username').value = h.username || '';
   $('password').value = '';
+  $('dest_kind').value = h.dest_kind || 'custom';
   for (const k of ANDROID_ONLY) $(k).value = h[k] || '';
   if (!h.agent_kind) $('agent_kind').value = 'aw_remote_host';
   $('form-title').textContent = 'Edit ' + h.name;
@@ -343,6 +395,7 @@ function loadForEdit(id) {
     ? 'A password is saved. Leave blank to keep it; type a new one to replace it.'
     : 'No password saved for this host.';
   applyProtocol();
+  if (h.remote_host_id) $('remote_host_id').value = h.remote_host_id;
   $('name').focus();
   $('form-title').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -383,9 +436,11 @@ $('form').addEventListener('submit', async (e) => {
     host: $('host').value.trim(),
     port: Number($('port').value) || 0,
     username: $('username').value.trim(),
+    dest_kind: $('dest_kind').value,
   };
   if ($('password').value) body.password = $('password').value;
   if (body.protocol === 'android') for (const k of ANDROID_ONLY) body[k] = $(k).value.trim();
+  if (body.dest_kind === 'remote_host') body.remote_host_id = $('remote_host_id').value;
   try {
     if (id) await call('PUT', '/hosts/' + encodeURIComponent(id), body);
     else await call('POST', '/hosts', body);
@@ -396,6 +451,7 @@ $('form').addEventListener('submit', async (e) => {
 });
 
 applyProtocol();
+loadHosts();
 refresh().catch((err) => say('Could not load hosts: ' + esc(err.message), 'err'));
 </script>
 </body>
