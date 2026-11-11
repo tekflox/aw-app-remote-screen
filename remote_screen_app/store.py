@@ -78,6 +78,21 @@ POST_INIT_COLUMNS = {
 # How an android host's exec channel is reached — see migrations/0003.
 AGENT_KINDS = ("aw_remote_host", "remote_agent")
 
+# Columns added by migrations/0004_destination.sql. Declared here for the
+# same reason as POST_INIT_COLUMNS above: standalone mode has no migration
+# runner, so this dict is what applies them there too.
+DESTINATION_COLUMNS = {
+    "dest_kind": "TEXT NOT NULL DEFAULT 'custom'",
+    "remote_host_id": "TEXT NOT NULL DEFAULT ''",
+}
+POST_INIT_COLUMNS = {**POST_INIT_COLUMNS, **DESTINATION_COLUMNS}
+
+# Where `host`/`port` mean "dial this address FROM the workspace container"
+# (today's behaviour) vs. "ask the linked remote_host_id to dial it FROM ITS
+# OWN network", over the /link tunnel the host already holds open — same
+# mechanism aw-app-tunnel already ships for its own tunnels.
+DEST_KINDS = ("custom", "remote_host")
+
 
 class HostError(ValueError):
     """Bad input from a caller — routes.py turns this into a 400."""
@@ -89,6 +104,21 @@ class HostNotFound(LookupError):
 
 def _password_key(host_id: str) -> str:
     return f"host:{host_id}:password"
+
+
+def _validate_destination(protocol: str, dest_kind: str, remote_host_id: str) -> tuple[str, str]:
+    """``remote_host`` relays over a linked host's /link tunnel — a TCP
+    transport, same as a direct ``custom`` dial. Android has its own exec
+    channel (see AGENT_KINDS) and never goes through this at all."""
+    if dest_kind not in DEST_KINDS:
+        raise HostError(f"dest_kind must be one of {', '.join(DEST_KINDS)}")
+    if dest_kind == "remote_host":
+        if protocol not in TCP_PROTOCOLS:
+            raise HostError("dest_kind 'remote_host' only applies to vnc/rdp")
+        if not remote_host_id:
+            raise HostError("remote_host_id is required when dest_kind is 'remote_host'")
+        return dest_kind, remote_host_id
+    return dest_kind, ""
 
 
 class HostStore:
@@ -103,7 +133,7 @@ class HostStore:
         rows = self._ctx.db.execute(
             self._table,
             "SELECT id, name, protocol, host, port, username, has_password, sort_order, "
-            "device_serial, agent_base_url, adb_bin, agent_kind "
+            "device_serial, agent_base_url, adb_bin, agent_kind, dest_kind, remote_host_id "
             "FROM {table} ORDER BY sort_order, lower(name)",
         )
         return [self._public(r) for r in rows]
@@ -112,7 +142,7 @@ class HostStore:
         rows = self._ctx.db.execute(
             self._table,
             "SELECT id, name, protocol, host, port, username, has_password, sort_order, "
-            "device_serial, agent_base_url, adb_bin, agent_kind "
+            "device_serial, agent_base_url, adb_bin, agent_kind, dest_kind, remote_host_id "
             "FROM {table} WHERE id = :id",
             {"id": host_id},
         )
@@ -147,6 +177,8 @@ class HostStore:
             "agent_base_url": row[9],
             "adb_bin": row[10],
             "agent_kind": row[11] or "aw_remote_host",
+            "dest_kind": row[12] or "custom",
+            "remote_host_id": row[13],
             "supported": row[2] in SUPPORTED_PROTOCOLS,
         }
 
@@ -172,6 +204,9 @@ class HostStore:
         else:
             # android is addressed by remote-agent profile id, not host:port.
             port = 0
+        dest_kind, remote_host_id = _validate_destination(
+            protocol, (body.get("dest_kind") or "custom").strip(),
+            (body.get("remote_host_id") or "").strip())
 
         password = body.get("password") or ""
         host_id = str(body.get("id") or _uuid.uuid4())
@@ -179,10 +214,10 @@ class HostStore:
             self._table,
             "INSERT INTO {table} "
             "(id, name, protocol, host, port, username, has_password, sort_order, "
-            " device_serial, agent_base_url, adb_bin, agent_kind) "
+            " device_serial, agent_base_url, adb_bin, agent_kind, dest_kind, remote_host_id) "
             "VALUES (:id, :name, :protocol, :host, :port, :username, :has_password, "
             "        :sort_order, :device_serial, :agent_base_url, :adb_bin, "
-            "        :agent_kind)",
+            "        :agent_kind, :dest_kind, :remote_host_id)",
             {
                 "id": host_id,
                 "name": name,
@@ -196,6 +231,8 @@ class HostStore:
                 "agent_base_url": (body.get("agent_base_url") or "").strip(),
                 "adb_bin": (body.get("adb_bin") or "").strip(),
                 "agent_kind": (body.get("agent_kind") or "aw_remote_host").strip(),
+                "dest_kind": dest_kind,
+                "remote_host_id": remote_host_id,
             },
         )
         if password:
@@ -231,6 +268,8 @@ class HostStore:
         for field in POST_INIT_COLUMNS:
             merged[field] = (current[field] if body.get(field) is None
                              else str(body[field]).strip())
+        merged["dest_kind"], merged["remote_host_id"] = _validate_destination(
+            merged["protocol"], merged["dest_kind"], merged["remote_host_id"])
 
         # Password is optional on update — omit/blank to KEEP the existing one,
         # so editing a name or port doesn't force re-typing it. An explicit
@@ -249,7 +288,8 @@ class HostStore:
             "port = :port, username = :username, has_password = :has_password, "
             "sort_order = :sort_order, device_serial = :device_serial, "
             "agent_base_url = :agent_base_url, adb_bin = :adb_bin, "
-            "agent_kind = :agent_kind, "
+            "agent_kind = :agent_kind, dest_kind = :dest_kind, "
+            "remote_host_id = :remote_host_id, "
             "updated_at = now() WHERE id = :id",
             {**merged, "has_password": has_password, "id": host_id},
         )

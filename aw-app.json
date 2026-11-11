@@ -15,7 +15,9 @@
   "runtime": {
     "python": ">=3.11",
     "entrypoint": "remote_screen_app.plugin:RemoteDesktopAppPlugin",
-    "pip_requires": [],
+    "pip_requires": [
+      "websockets>=12"
+    ],
     "standalone": {
       "module": "remote_screen_app",
       "default_port": 9410
