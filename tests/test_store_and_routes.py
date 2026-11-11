@@ -289,6 +289,74 @@ def test_bridge_pumps_bytes_through_a_working_relay(client, monkeypatch):
     assert bridge.closed is True
 
 
+def test_bridge_closes_as_connect_failed_when_relay_opens_but_dial_fails(client, monkeypatch):
+    """The real defect QA caught live: aw-backend's tcp_bridge accepts the
+    relay WS before dialling the destination on the linked host's own side,
+    so a downstream dial failure (nothing listening on host:port) closes
+    the relay with no code AFTER open_bridge() already succeeded — it is
+    NOT a RemoteDialError out of open_bridge() itself. This must still
+    surface to the browser as WS_CONNECT_FAILED, not a silent/uncoded
+    disconnect (previously observed as a bare 1006)."""
+    import remote_screen_app.routes as routes_mod
+
+    created = client.post("/hosts", json={
+        "name": "mac", "host": "127.0.0.1", "port": 59999,
+        "dest_kind": "remote_host", "remote_host_id": "h1",
+    }).json()
+
+    class _NeverConnectsBridge:
+        """A relay that opened fine but never delivers a byte — the shape
+        aw-backend's tcp_bridge takes when the downstream dial fails."""
+
+        def __init__(self):
+            self.closed = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+        async def close(self):
+            self.closed = True
+
+    bridge = _NeverConnectsBridge()
+
+    async def fake_open_bridge(remote_host_id, host, port):
+        return bridge
+
+    monkeypatch.setattr(routes_mod.remote_dial, "open_bridge", fake_open_bridge)
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/ws/bridge/{created['id']}") as ws:
+            ws.receive_bytes()
+    assert exc_info.value.code == routes_mod.WS_CONNECT_FAILED
+    assert bridge.closed is True
+
+
+@pytest.mark.asyncio
+async def test_pump_raises_when_the_relay_never_delivers_a_byte():
+    """Lower-level unit coverage for the same signal: VNC (the only protocol
+    that reaches this bridge) has the destination speak first, so a relay
+    that ends having sent nothing means the downstream dial never actually
+    succeeded, distinct from a session that connected and ended later."""
+    from remote_screen_app import remote_dial
+
+    class _FakeWS:
+        async def receive_bytes(self):
+            await asyncio.sleep(3600)  # the browser never sends anything either
+
+    class _EmptyBridge:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    with pytest.raises(remote_dial.RemoteDialError):
+        await remote_dial.pump(_FakeWS(), _EmptyBridge())
+
+
 def test_settings_endpoint_reflects_config(ctx, store):
     ctx.config = {"default_scaling": "remote", "view_only": True}
     body = TestClient(build_routes(ctx, store)).get("/settings").json()
