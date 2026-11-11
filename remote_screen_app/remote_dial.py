@@ -100,7 +100,20 @@ async def pump(ws: WebSocket, bridge) -> None:
     destination has no local TCP socket at all, only the relay — and it
     swallows its own teardown exceptions the same way those do, so the
     caller only has to close the bridge afterwards.
+
+    Raises RemoteDialError if the relay ends having never delivered a
+    single byte. ``open_bridge`` only fails loudly when the RELAY itself
+    cannot be opened (bad credential, aw-backend unreachable) — but
+    aw-backend's ``tcp_bridge`` accepts that relay WS *before* dialling the
+    destination on the linked host's own side, so a downstream dial failure
+    (nothing listening on host:port, VPN down, wrong port) shows up here
+    instead: the relay closes with no code, moments after opening
+    successfully. Since VNC (the only protocol that reaches this bridge)
+    has the target speak first, "never received a byte" is the reliable
+    signal that the destination never actually came up, as opposed to a
+    session that connected fine and ended later.
     """
+    received_any = False
 
     async def up() -> None:
         try:
@@ -111,6 +124,7 @@ async def pump(ws: WebSocket, bridge) -> None:
             pass  # browser disconnected or relay send failed — tearing down
 
     async def down() -> None:
+        nonlocal received_any
         try:
             async for message in bridge:
                 if isinstance(message, str):
@@ -118,6 +132,7 @@ async def pump(ws: WebSocket, bridge) -> None:
                     # far side is speaking a different protocol than we think.
                     log.warning("remote-screen: unexpected text frame on the relay")
                     continue
+                received_any = True
                 await ws.send_bytes(message)
         except Exception:
             pass  # relay closed or browser write failed — tearing down
@@ -128,3 +143,8 @@ async def pump(ws: WebSocket, bridge) -> None:
     finally:
         for task in tasks:
             task.cancel()
+
+    if not received_any:
+        raise RemoteDialError(
+            "relay closed before the destination ever sent a byte — the "
+            "downstream dial likely failed on the linked host's own side")

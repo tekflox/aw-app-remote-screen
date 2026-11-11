@@ -199,6 +199,18 @@ def build_routes(ctx, store: HostStore) -> FastAPI:
                 return
             try:
                 await remote_dial.pump(ws, relay)
+            except remote_dial.RemoteDialError as e:
+                # The relay WS opened fine, but the downstream dial on the
+                # host's own side failed — aw-backend's tcp_bridge signals
+                # that by closing the relay with no code AFTER accepting it,
+                # not by failing open_bridge() itself, so it surfaces here
+                # instead of above. Same WS_CONNECT_FAILED either way.
+                log.warning("remote-screen %s: relay dial to host %s (%s:%s) failed: %s",
+                            host_id, row["remote_host_id"], row["host"], row["port"], e)
+                try:
+                    await ws.close(code=WS_CONNECT_FAILED)
+                except Exception:
+                    pass  # browser already gone — nothing left to tell it
             finally:
                 await relay.close()
             return
